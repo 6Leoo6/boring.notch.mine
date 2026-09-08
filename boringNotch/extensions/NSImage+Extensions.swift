@@ -136,6 +136,31 @@ extension NSImage {
     }
 }
 
+extension NSColor {
+    /// Perceived brightness in sRGB, or nil when the colour has no sRGB representation.
+    var srgbLuminance: CGFloat? {
+        guard let rgbColor = usingColorSpace(.sRGB) else { return nil }
+
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        rgbColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+    }
+}
+
+extension Color {
+    /// Album-art tint shared by the music, calendar and sneak-peek views.
+    /// `avgColor` defaults to white when no artwork is loaded, so near-white input falls
+    /// back instead of being dimmed into an arbitrary grey.
+    static func playerTint(from color: NSColor, fallback: Color, factor: CGFloat = 0.6) -> Color {
+        guard let luminance = color.srgbLuminance, luminance < 0.9 else { return fallback }
+        return Color(nsColor: color).ensureMinimumBrightness(factor: factor)
+    }
+}
+
 extension Color {
     func ensureMinimumBrightness(factor: CGFloat) -> Color {
         guard factor >= 0 && factor <= 1 else {

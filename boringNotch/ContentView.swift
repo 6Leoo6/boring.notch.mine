@@ -26,8 +26,11 @@ struct ContentView: View {
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
+    @State private var useExtendedHoverCloseDelay: Bool = false
 
     @State private var gestureProgress: CGFloat = .zero
+    @State private var tabSwitchCooldown: Bool = false
+    @State private var tabSwitchTask: Task<Void, Never>?
 
     @State private var haptics: Bool = false
 
@@ -118,7 +121,7 @@ struct ContentView: View {
                     )
                 
                 mainLayout
-                    .frame(height: vm.notchState == .open ? vm.notchSize.height : nil)
+                    .frame(height: vm.notchState == .open ? vm.notchSize.height + (coordinator.clipboardPreviewEntry != nil ? clipboardPreviewHeight : 0) : nil)
                     .conditionalModifier(true) { view in
                         let openAnimation = Animation.spring(response: 0.42, dampingFraction: 0.8, blendDuration: 0)
                         let closeAnimation = Animation.spring(response: 0.45, dampingFraction: 1.0, blendDuration: 0)
@@ -146,6 +149,15 @@ struct ContentView: View {
                                 handleUpGesture(translation: translation, phase: phase)
                             }
                     }
+                    .conditionalModifier(Defaults[.enableGestures] && Defaults[.boringShelf]) { view in
+                        view
+                            .panGesture(direction: .left) { translation, _ in
+                                handleLeftGesture(translation: translation)
+                            }
+                            .panGesture(direction: .right) { translation, _ in
+                                handleRightGesture(translation: translation)
+                            }
+                    }
                     .onReceive(NotificationCenter.default.publisher(for: .sharingDidFinish)) { _ in
                         if vm.notchState == .open && !isHovering && !vm.isBatteryPopoverActive {
                             hoverTask?.cancel()
@@ -161,7 +173,11 @@ struct ContentView: View {
                         }
                     }
                     .onChange(of: vm.notchState) { _, newState in
-                        if newState == .closed && isHovering {
+                        guard newState == .closed else { return }
+                        // Every close path funnels through this transition, so clearing the
+                        // preview here is what lets the window shrink back to its real height.
+                        coordinator.clipboardPreviewEntry = nil
+                        if isHovering {
                             withAnimation {
                                 isHovering = false
                             }
@@ -201,9 +217,10 @@ struct ContentView: View {
                         .frame(width: computedChinWidth, height: vm.chinHeight)
                 }
             }
+
         }
         .padding(.bottom, 8)
-        .frame(maxWidth: windowSize.width, maxHeight: windowSize.height, alignment: .top)
+        .frame(maxWidth: windowSize.width, maxHeight: windowSize.height + (coordinator.clipboardPreviewEntry != nil ? clipboardPreviewHeight : 0), alignment: .top)
         .compositingGroup()
         .scaleEffect(
             x: gestureScale,
@@ -237,6 +254,19 @@ struct ContentView: View {
                 vm.dropEvent = false
                 if !SharingStateManager.shared.preventNotchClose {
                     vm.close()
+                }
+            }
+        }
+        .onChange(of: coordinator.clipboardPreviewEntry == nil) { wasNil, isNil in
+            // When the preview is dismissed while the notch stays open, give the user extra
+            // time to move their cursor back onto the shrunken island before it auto-closes.
+            // A preview cleared as part of closing needs no such grace period.
+            if isNil && !wasNil && vm.notchState == .open {
+                hoverTask?.cancel()
+                useExtendedHoverCloseDelay = true
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(800))
+                    useExtendedHoverCloseDelay = false
                 }
             }
         }
@@ -327,7 +357,7 @@ struct ContentView: View {
                                   HStack(alignment: .center) {
                                       Image(systemName: "music.note")
                                       GeometryReader { geo in
-                                          MarqueeText(.constant(musicManager.songTitle + " - " + musicManager.artistName),  textColor: Defaults[.playerColorTinting] ? Color(nsColor: musicManager.avgColor).ensureMinimumBrightness(factor: 0.6) : .gray, minDuration: 1, frameWidth: geo.size.width)
+                                          MarqueeText(.constant(musicManager.songTitle + " - " + musicManager.artistName),  textColor: Defaults[.playerColorTinting] ? .playerTint(from: musicManager.avgColor, fallback: .gray) : .gray, minDuration: 1, frameWidth: geo.size.width)
                                       }
                                   }
                                   .foregroundStyle(.gray)
@@ -359,6 +389,25 @@ struct ContentView: View {
                 .zIndex(1)
                 .allowsHitTesting(vm.notchState == .open)
                 .opacity(gestureProgress != 0 ? 1.0 - min(abs(gestureProgress) * 0.1, 0.3) : 1.0)
+            }
+        }
+        .overlay(alignment: .top) {
+            if vm.notchState == .open, let entry = coordinator.clipboardPreviewEntry {
+                VStack(spacing: 0) {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.09))
+                        .frame(height: 0.5)
+                        .padding(.horizontal, 4)
+                    ClipboardPreviewPanel(entry: entry) {
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                            coordinator.clipboardPreviewEntry = nil
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .frame(height: clipboardPreviewHeight)
+                .padding(.top, vm.notchSize.height)
+                .transition(.opacity)
             }
         }
         .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], delegate: GeneralDropTargetDelegate(isTargeted: $vm.generalDropTargeting))
@@ -540,15 +589,16 @@ struct ContentView: View {
                 }
             }
         } else {
+            let delayMs: Int = useExtendedHoverCloseDelay ? 600 : 100
             hoverTask = Task {
-                try? await Task.sleep(for: .milliseconds(100))
+                try? await Task.sleep(for: .milliseconds(delayMs))
                 guard !Task.isCancelled else { return }
-                
+
                 await MainActor.run {
                     withAnimation(animationSpring) {
                         self.isHovering = false
                     }
-                    
+
                     if self.vm.notchState == .open && !self.vm.isBatteryPopoverActive && !SharingStateManager.shared.preventNotchClose {
                         self.vm.close()
                     }
@@ -583,7 +633,7 @@ struct ContentView: View {
     }
 
     private func handleUpGesture(translation: CGFloat, phase: NSEvent.Phase) {
-        guard vm.notchState == .open && !vm.isHoveringCalendar else { return }
+        guard vm.notchState == .open && !vm.isHoveringCalendar && !tabSwitchCooldown else { return }
 
         withAnimation(animationSpring) {
             gestureProgress = (translation / Defaults[.gestureSensitivity]) * -20
@@ -599,7 +649,7 @@ struct ContentView: View {
             withAnimation(animationSpring) {
                 isHovering = false
             }
-            if !SharingStateManager.shared.preventNotchClose { 
+            if !SharingStateManager.shared.preventNotchClose {
                 gestureProgress = .zero
                 vm.close()
             }
@@ -608,6 +658,49 @@ struct ContentView: View {
                 haptics.toggle()
             }
         }
+    }
+
+    private func cycleTab(forward: Bool) {
+        if Defaults[.enableHaptics] { haptics.toggle() }
+        let tabs: [NotchViews] = [.home, .shelf]
+        guard let idx = tabs.firstIndex(of: coordinator.currentView) else { return }
+        let next = forward
+            ? (idx + 1) % tabs.count
+            : (idx - 1 + tabs.count) % tabs.count
+        withAnimation(.smooth(duration: 0.35)) {
+            coordinator.currentView = tabs[next]
+        }
+    }
+
+    private func armTabCooldown() {
+        tabSwitchCooldown = true
+        tabSwitchTask?.cancel()
+        tabSwitchTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            tabSwitchCooldown = false
+        }
+    }
+
+    // Fixed threshold for horizontal tab switching — independent of the open/close
+    // gesture sensitivity so users can set a high open/close threshold without
+    // making tab switching require an unreasonably large swipe.
+    private let tabSwipeThreshold: CGFloat = 60
+
+    // panGesture normalises for natural scrolling, so .left/.right are always the
+    // physical swipe direction: left = forward, right = backward, as in Safari.
+    private func handleLeftGesture(translation: CGFloat) {
+        guard vm.notchState == .open, !tabSwitchCooldown,
+              translation > tabSwipeThreshold else { return }
+        armTabCooldown()
+        cycleTab(forward: true)
+    }
+
+    private func handleRightGesture(translation: CGFloat) {
+        guard vm.notchState == .open, !tabSwitchCooldown,
+              translation > tabSwipeThreshold else { return }
+        armTabCooldown()
+        cycleTab(forward: false)
     }
 }
 

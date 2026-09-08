@@ -135,12 +135,13 @@ class BoringViewModel: NSObject, ObservableObject {
 
         switch webcamManager.authorizationStatus {
         case .authorized:
-            if webcamManager.isSessionRunning {
+            if isCameraExpanded {
                 webcamManager.stopSession()
                 isCameraExpanded = false
             } else if webcamManager.cameraAvailable {
                 webcamManager.startSession()
                 isCameraExpanded = true
+                coordinator.currentView = .home
             }
 
         case .denied, .restricted:
@@ -192,8 +193,16 @@ class BoringViewModel: NSObject, ObservableObject {
     func open() {
         self.notchSize = openNotchSize
         self.notchState = .open
-        
-        // Force music information update when notch is opened
+
+        // Decide which tab to show each time the notch opens.
+        // Doing this here (not in close()) prevents a race where close() resets
+        // the tab right after the user has just switched it.
+        if !ShelfStateViewModel.shared.isEmpty && Defaults[.openShelfByDefault] {
+            coordinator.currentView = .shelf
+        } else if !coordinator.openLastTabByDefault {
+            coordinator.currentView = .home
+        }
+
         MusicManager.shared.forceUpdate()
     }
 
@@ -208,14 +217,6 @@ class BoringViewModel: NSObject, ObservableObject {
         self.isBatteryPopoverActive = false
         self.coordinator.sneakPeek.show = false
         self.edgeAutoOpenActive = false
-
-        // Set the current view to shelf if it contains files and the user enables openShelfByDefault
-        // Otherwise, if the user has not enabled openLastShelfByDefault, set the view to home
-    if !ShelfStateViewModel.shared.isEmpty && Defaults[.openShelfByDefault] {
-            coordinator.currentView = .shelf
-        } else if !coordinator.openLastTabByDefault {
-            coordinator.currentView = .home
-        }
     }
 
     func closeHello() {

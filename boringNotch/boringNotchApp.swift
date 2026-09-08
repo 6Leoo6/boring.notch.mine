@@ -67,6 +67,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isScreenLocked: Bool = false
     private var windowScreenDidChangeObserver: Any?
     private var dragDetectors: [String: DragDetector] = [:] // UUID -> DragDetector
+    private var shrinkWindowTask: Task<Void, Never>?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
@@ -265,6 +266,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
+    private func setClipboardPreviewExpansion(_ expand: Bool) {
+        shrinkWindowTask?.cancel()
+        shrinkWindowTask = nil
+
+        let targetHeight = windowSize.height + (expand ? clipboardPreviewHeight : 0)
+        let affectedWindows: [NSWindow] = Defaults[.showOnAllDisplays]
+            ? Array(windows.values)
+            : [window].compactMap { $0 }
+
+        if expand {
+            // Grow the window immediately so SwiftUI's spring has room to animate freely
+            for w in affectedWindows {
+                guard let screen = w.screen else { continue }
+                let newOriginY = screen.frame.maxY - targetHeight
+                let newRect = NSRect(x: w.frame.origin.x, y: newOriginY, width: w.frame.width, height: targetHeight)
+                w.setFrame(newRect, display: true)
+            }
+        } else {
+            // Collect target rects first, then shrink after the SwiftUI spring settles
+            let rects: [(NSWindow, NSRect)] = affectedWindows.compactMap { w in
+                guard let screen = w.screen else { return nil }
+                let newOriginY = screen.frame.maxY - targetHeight
+                let newRect = NSRect(x: w.frame.origin.x, y: newOriginY, width: w.frame.width, height: targetHeight)
+                return (w, newRect)
+            }
+            shrinkWindowTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(450))
+                guard !Task.isCancelled else { return }
+                for (w, rect) in rects {
+                    w.setFrame(rect, display: true)
+                }
+            }
+        }
+    }
+
+    @MainActor
     private func positionWindow(_ window: NSWindow, on screen: NSScreen, changeAlpha: Bool = false) {
         if changeAlpha {
             window.alphaValue = 0
@@ -331,6 +368,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.setupDragDetectors()
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name.clipboardPreviewExpandChanged, object: nil, queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor in
+                guard let self else { return }
+                let expand = notification.userInfo?["expand"] as? Bool ?? false
+                self.setClipboardPreviewExpansion(expand)
             }
         }
 
@@ -410,17 +457,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        if !Defaults[.showOnAllDisplays] {
-            let viewModel = self.vm
-            let window = createBoringNotchWindow(
-                for: NSScreen.main ?? NSScreen.screens.first!, with: viewModel)
-            self.window = window
-            adjustWindowPosition(changeAlpha: true)
-        } else {
-            adjustWindowPosition(changeAlpha: true)
+        if !Defaults[.showOnAllDisplays], let screen = NSScreen.main ?? NSScreen.screens.first {
+            self.window = createBoringNotchWindow(for: screen, with: self.vm)
         }
+        adjustWindowPosition(changeAlpha: true)
 
         setupDragDetectors()
+
+        ClipboardManager.shared.start()
+        ClipboardManager.shared.enforceLimits()
 
         if coordinator.firstLaunch {
             DispatchQueue.main.async {
@@ -603,6 +648,7 @@ extension Notification.Name {
     static let showOnAllDisplaysChanged = Notification.Name("showOnAllDisplaysChanged")
     static let automaticallySwitchDisplayChanged = Notification.Name("automaticallySwitchDisplayChanged")
     static let expandedDragDetectionChanged = Notification.Name("expandedDragDetectionChanged")
+    static let clipboardPreviewExpandChanged = Notification.Name("clipboardPreviewExpandChanged")
 }
 
 extension CGRect: @retroactive Hashable {

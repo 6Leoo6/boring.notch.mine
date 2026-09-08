@@ -602,6 +602,7 @@
       }
     },
     "%@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -900,6 +901,9 @@
           }
         }
       }
+    },
+    "%lld days" : {
+
     },
     "%lld%%" : {
       "localizations" : {
@@ -1300,6 +1304,12 @@
           }
         }
       }
+    },
+    "+%lld" : {
+
+    },
+    "1 day" : {
+
     },
     "About" : {
       "localizations" : {
@@ -2203,6 +2213,7 @@
       }
     },
     "All-day" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -5202,6 +5213,12 @@
         }
       }
     },
+    "Clear All History" : {
+
+    },
+    "Clear clipboard history" : {
+
+    },
     "Clear slot" : {
       "localizations" : {
         "ar" : {
@@ -5301,6 +5318,9 @@
           }
         }
       }
+    },
+    "Clipboard" : {
+
     },
     "Close" : {
       "localizations" : {
@@ -7002,6 +7022,9 @@
         }
       }
     },
+    "Data" : {
+
+    },
     "Default" : {
       "localizations" : {
         "ar" : {
@@ -7101,6 +7124,15 @@
           }
         }
       }
+    },
+    "Delete" : {
+
+    },
+    "Delete item?" : {
+
+    },
+    "Delete, don't ask again" : {
+
     },
     "Description" : {
       "extractionState" : "stale",
@@ -8306,6 +8338,9 @@
         }
       }
     },
+    "Enable clipboard history" : {
+
+    },
     "Enable colored spectrograms" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -9008,6 +9043,7 @@
       }
     },
     "Enjoy your free time!" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -9106,6 +9142,9 @@
           }
         }
       }
+    },
+    "Entries older than the selected duration are removed immediately when you change this setting, and on every app launch." : {
+
     },
     "Expanded drag detection area" : {
       "localizations" : {
@@ -11208,6 +11247,9 @@
         }
       }
     },
+    "History" : {
+
+    },
     "Hover delay" : {
       "localizations" : {
         "ar" : {
@@ -11909,6 +11951,9 @@
         }
       }
     },
+    "Keep history for" : {
+
+    },
     "Layout Preview" : {
       "localizations" : {
         "ar" : {
@@ -12410,6 +12455,7 @@
       }
     },
     "Mark as complete" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -12510,6 +12556,7 @@
       }
     },
     "Mark as incomplete" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -13008,6 +13055,9 @@
           }
         }
       }
+    },
+    "Maximum entries" : {
+
     },
     "Media" : {
       "localizations" : {
@@ -14710,6 +14760,7 @@
       }
     },
     "No events" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -14810,6 +14861,7 @@
       }
     },
     "No events today" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -15509,6 +15561,9 @@
           }
         }
       }
+    },
+    "Nothing copied yet" : {
+
     },
     "Open Calendar Settings" : {
       "localizations" : {
@@ -16409,6 +16464,9 @@
           }
         }
       }
+    },
+    "Preview" : {
+
     },
     "Progress bar style" : {
       "localizations" : {
@@ -21213,6 +21271,9 @@
           }
         }
       }
+    },
+    "This item will be removed from your clipboard history." : {
+
     },
     "Time to Full Charge: %lld min" : {
       "localizations" : {

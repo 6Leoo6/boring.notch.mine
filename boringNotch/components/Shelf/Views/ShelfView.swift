@@ -7,13 +7,24 @@
 
 import SwiftUI
 import AppKit
+import Defaults
+
+private enum ShelfPanel {
+    case files, clipboard
+}
 
 struct ShelfView: View {
     @EnvironmentObject var vm: BoringViewModel
     @StateObject var tvm = ShelfStateViewModel.shared
     @StateObject var selection = ShelfSelectionModel.shared
     @StateObject private var quickLookService = QuickLookService()
+    @State private var activePanel: ShelfPanel = .files
+    @Default(.clipboardHistoryEnabled) private var clipboardHistoryEnabled: Bool
     private let spacing: CGFloat = 8
+
+    private var showsClipboardPanel: Bool {
+        clipboardHistoryEnabled && activePanel == .clipboard
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -22,7 +33,8 @@ struct ShelfView: View {
                 .environmentObject(vm)
             panel
                 .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], isTargeted: $vm.dragDetectorTargeting) { providers in
-                    handleDrop(providers: providers)
+                    guard !showsClipboardPanel else { return false }
+                    return handleDrop(providers: providers)
                 }
         }
         // Bind Quick Look to shelf selection
@@ -61,20 +73,62 @@ struct ShelfView: View {
     var panel: some View {
         RoundedRectangle(cornerRadius: 16)
             .stroke(
-                vm.dragDetectorTargeting
+                vm.dragDetectorTargeting && !showsClipboardPanel
                     ? Color.accentColor.opacity(0.9)
                     : Color.white.opacity(0.1),
                 style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [10])
             )
             .overlay {
-                content
-                    .padding()
+                VStack(spacing: 5) {
+                    // With clipboard history off there is only one panel, so the switcher is pointless
+                    if clipboardHistoryEnabled {
+                        panelToggle
+                    }
+                    Group {
+                        if showsClipboardPanel {
+                            ClipboardHistoryView()
+                        } else {
+                            content
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding(10)
             }
             .transaction { transaction in
                 transaction.animation = vm.animation
             }
             .contentShape(Rectangle())
-            .onTapGesture { selection.clear() }
+            .onTapGesture {
+                if !showsClipboardPanel { selection.clear() }
+            }
+    }
+
+    private var panelToggle: some View {
+        HStack(spacing: 2) {
+            panelButton("Files", icon: "tray.fill", panel: .files)
+            panelButton("Clipboard", icon: "doc.on.clipboard", panel: .clipboard)
+        }
+        .padding(3)
+        .background(Capsule().fill(Color.white.opacity(0.06)))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func panelButton(_ label: String, icon: String, panel: ShelfPanel) -> some View {
+        Button {
+            withAnimation(.smooth(duration: 0.2)) { activePanel = panel }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: icon).imageScale(.small)
+                Text(label).font(.caption).fontWeight(.medium)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(activePanel == panel ? Color.white.opacity(0.15) : Color.clear))
+            .foregroundStyle(activePanel == panel ? Color.white : Color.gray)
+        }
+        .buttonStyle(.plain)
     }
 
     var content: some View {

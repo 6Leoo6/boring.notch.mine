@@ -52,6 +52,15 @@ class BoringViewCoordinator: ObservableObject {
 
     @Published var currentView: NotchViews = .home
     @Published var helloAnimationRunning: Bool = false
+    @Published var clipboardPreviewEntry: ClipboardEntry? = nil {
+        didSet {
+            NotificationCenter.default.post(
+                name: .clipboardPreviewExpandChanged,
+                object: nil,
+                userInfo: ["expand": clipboardPreviewEntry != nil]
+            )
+        }
+    }
     private var sneakPeekDispatch: DispatchWorkItem?
     private var expandingViewDispatch: DispatchWorkItem?
     private var hudEnableTask: Task<Void, Never>?
@@ -177,8 +186,8 @@ class BoringViewCoordinator: ObservableObject {
     
     @objc func sneakPeekEvent(_ notification: Notification) {
         let decoder = JSONDecoder()
-        if let decodedData = try? decoder.decode(
-            SharedSneakPeek.self, from: notification.userInfo?.first?.value as! Data)
+        if let payload = notification.userInfo?.first?.value as? Data,
+           let decodedData = try? decoder.decode(SharedSneakPeek.self, from: payload)
         {
             let contentType =
                 decodedData.type == "brightness"

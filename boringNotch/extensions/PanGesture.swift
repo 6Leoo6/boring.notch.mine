@@ -58,6 +58,7 @@ private struct ScrollMonitor: NSViewRepresentable {
         private var monitor: Any?
         private var accumulated: CGFloat = 0
         private var active = false
+        private var claimedByNestedScroll = false
             private var endTask: Task<Void, Never>?
         private let noiseThreshold: CGFloat = 0.2
 
@@ -81,14 +82,15 @@ private struct ScrollMonitor: NSViewRepresentable {
                 }
                 active = false
                 accumulated = 0
+                claimedByNestedScroll = false
             }
         }
 
         func installMonitor(on view: NSView) {
             removeMonitor()
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self, weak view] event in
-                guard let self = self, event.window === view?.window else { return event }
-                self.handleScroll(event)
+                guard let self = self, let view, event.window === view.window else { return event }
+                self.handleScroll(event, in: view)
                 return event
             }
         }
@@ -100,11 +102,12 @@ private struct ScrollMonitor: NSViewRepresentable {
             }
             accumulated = 0
             active = false
+            claimedByNestedScroll = false
             endTask?.cancel()
             endTask = nil
         }
 
-        private func handleScroll(_ event: NSEvent) {
+        private func handleScroll(_ event: NSEvent, in view: NSView) {
             if event.phase == .ended || event.momentumPhase == .ended {
                 if active {
                     action(accumulated.magnitude, .ended)
@@ -113,8 +116,26 @@ private struct ScrollMonitor: NSViewRepresentable {
                 }
                 active = false
                 accumulated = 0
+                claimedByNestedScroll = false
+                endTask?.cancel()
+                endTask = nil
                 return
             }
+
+            // Ignore momentum-phase events — physics deceleration after finger lift should
+            // never re-trigger an intent gesture.
+            guard event.momentumPhase.isEmpty else { return }
+
+            // A horizontal swipe that starts over a nested horizontal scroll view (the
+            // clipboard strip) belongs to that scroll view, not to us. Re-evaluate only
+            // while the gesture is still forming; once it has been claimed either way the
+            // latch holds until the gesture ends, so drifting off the strip mid-scroll
+            // cannot hand the rest of the swipe back to the tab switcher.
+            if !active {
+                claimedByNestedScroll = direction.isHorizontal
+                    && Self.isOverHorizontalScrollView(event, in: view)
+            }
+            guard !claimedByNestedScroll else { return }
 
             // Only consider scroll events that are primarily along the configured axis.
             let absDX = abs(event.scrollingDeltaX)
@@ -124,9 +145,12 @@ private struct ScrollMonitor: NSViewRepresentable {
             let isAxisDominant: Bool = direction.isHorizontal ? (absDX >= axisDominanceFactor * absDY) : (absDY >= axisDominanceFactor * absDX)
             guard isAxisDominant else { return }
 
+            // Natural scrolling inverts horizontal deltas, so normalise them here: `.left`
+            // then always means a physical swipe to the left, whatever the system setting.
+            let deltaX = event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX
+            let raw = direction.signed(deltaX: deltaX, deltaY: event.scrollingDeltaY)
             // Scale non-precise (mouse wheel) scrolling deltas so they feel similar to
             // trackpad gestures.
-            let raw = direction.signed(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY)
             let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 8
             let s = raw * scale
             guard s.magnitude > noiseThreshold else { return }
@@ -141,5 +165,28 @@ private struct ScrollMonitor: NSViewRepresentable {
             // Schedule a timeout to end the gesture if no further scroll events arrive.
             scheduleEndTimeout()
         }
+
+        private static func isOverHorizontalScrollView(_ event: NSEvent, in view: NSView) -> Bool {
+            guard let contentView = view.window?.contentView,
+                  let hit = contentView.hitTest(event.locationInWindow) else { return false }
+
+            var candidate: NSView? = hit
+            while let current = candidate {
+                if let scrollView = current as? NSScrollView, scrollView.scrollsHorizontally {
+                    return true
+                }
+                candidate = current.superview
+            }
+            return false
+        }
+    }
+}
+
+private extension NSScrollView {
+    /// True only when the document is genuinely wider than the visible clip area — a
+    /// vertical-only list must not swallow horizontal tab swipes.
+    var scrollsHorizontally: Bool {
+        guard let documentView else { return false }
+        return documentView.frame.width - contentView.bounds.width > 1
     }
 }

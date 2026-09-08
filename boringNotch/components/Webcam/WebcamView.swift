@@ -47,6 +47,9 @@ struct CameraPreviewView: View {
             .onTapGesture {
                 handleCameraTap()
             }
+            .onAppear {
+                webcamManager.startSession()
+            }
             .onDisappear {
                 webcamManager.stopSession()
             }
@@ -98,10 +101,10 @@ struct CameraPreviewLayerView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
-        previewLayer.frame = view.bounds
-        previewLayer.videoGravity = .resizeAspectFill
-        view.layer = previewLayer
         view.wantsLayer = true
+        view.layer = previewLayer
+        previewLayer.videoGravity = .resizeAspectFill
+        previewLayer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         return view
     }
 

@@ -51,6 +51,9 @@ struct SettingsView: View {
                 NavigationLink(value: "Shelf") {
                     Label("Shelf", systemImage: "books.vertical")
                 }
+                NavigationLink(value: "Clipboard") {
+                    Label("Clipboard", systemImage: "clipboard")
+                }
                 NavigationLink(value: "Shortcuts") {
                     Label("Shortcuts", systemImage: "keyboard")
                 }
@@ -85,6 +88,8 @@ struct SettingsView: View {
                     Charge()
                 case "Shelf":
                     Shelf()
+                case "Clipboard":
+                    ClipboardSettings()
                 case "Shortcuts":
                     Shortcuts()
                 case "Extensions":
@@ -710,26 +715,11 @@ struct Media: View {
 struct CalendarSettings: View {
     @ObservedObject private var calendarManager = CalendarManager.shared
     @Default(.showCalendar) var showCalendar: Bool
-    @Default(.hideCompletedReminders) var hideCompletedReminders
-    @Default(.hideAllDayEvents) var hideAllDayEvents
-    @Default(.autoScrollToNextEvent) var autoScrollToNextEvent
 
     var body: some View {
         Form {
             Defaults.Toggle(key: .showCalendar) {
                 Text("Show calendar")
-            }
-            Defaults.Toggle(key: .hideCompletedReminders) {
-                Text("Hide completed reminders")
-            }
-            Defaults.Toggle(key: .hideAllDayEvents) {
-                Text("Hide all-day events")
-            }
-            Defaults.Toggle(key: .autoScrollToNextEvent) {
-                Text("Auto-scroll to next event")
-            }
-            Defaults.Toggle(key: .showFullEventTitles) {
-                Text("Always show full event titles")
             }
             Section(header: Text("Calendars")) {
                 if calendarManager.calendarAuthorizationStatus != .fullAccess {
@@ -1015,6 +1005,73 @@ struct Shelf: View {
         }
         .accentColor(.effectiveAccent)
         .navigationTitle("Shelf")
+    }
+}
+
+struct ClipboardSettings: View {
+    @Default(.clipboardHistoryEnabled) var enabled: Bool
+    @Default(.clipboardHistoryDays) var historyDays: Int
+    @Default(.clipboardMaxEntries) var maxEntries: Int
+
+    private let dayOptions = [1, 3, 7, 14, 30]
+    private let entryOptions = [25, 50, 100, 200]
+
+    var body: some View {
+        Form {
+            Section {
+                Defaults.Toggle(key: .clipboardHistoryEnabled) {
+                    Text("Enable clipboard history")
+                }
+                .onChange(of: enabled) { _, isEnabled in
+                    Task { @MainActor in ClipboardManager.shared.setEnabled(isEnabled) }
+                }
+
+                Defaults.Toggle(key: .clipboardDeleteConfirmEnabled) {
+                    Text("Ask before deleting an item")
+                }
+                .disabled(!enabled)
+            } header: {
+                Text("General")
+            }
+
+            Section {
+                Picker("Keep history for", selection: $historyDays) {
+                    ForEach(dayOptions, id: \.self) { days in
+                        Text(days == 1 ? "1 day" : "\(days) days").tag(days)
+                    }
+                }
+                .onChange(of: historyDays) {
+                    Task { @MainActor in ClipboardManager.shared.enforceLimits() }
+                }
+
+                Picker("Maximum entries", selection: $maxEntries) {
+                    ForEach(entryOptions, id: \.self) { n in
+                        Text("\(n)").tag(n)
+                    }
+                }
+                .onChange(of: maxEntries) {
+                    Task { @MainActor in ClipboardManager.shared.enforceLimits() }
+                }
+            } header: {
+                Text("History")
+            } footer: {
+                Text("History is trimmed by age and by entry count, on app launch and whenever you change these settings.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .disabled(!enabled)
+
+            Section {
+                Button("Clear All History", role: .destructive) {
+                    Task { @MainActor in ClipboardManager.shared.clear() }
+                }
+            } header: {
+                Text("Data")
+            }
+            .disabled(!enabled)
+        }
+        .accentColor(.effectiveAccent)
+        .navigationTitle("Clipboard")
     }
 }
 

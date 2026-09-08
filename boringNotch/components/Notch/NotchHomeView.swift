@@ -118,6 +118,14 @@ struct MusicControlsView: View {
     @State private var lastDragged: Date = .distantPast
     @Default(.musicControlSlots) private var slotConfig
     @Default(.musicControlSlotLimit) private var slotLimit
+    @Default(.playerColorTinting) private var playerColorTinting
+
+    private static let fallbackWhite = Color.white
+
+    private var musicTint: Color {
+        guard playerColorTinting else { return Self.fallbackWhite }
+        return .playerTint(from: musicManager.avgColor, fallback: Self.fallbackWhite)
+    }
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -141,7 +149,7 @@ struct MusicControlsView: View {
     private func songInfo(width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             MarqueeText(
-                $musicManager.songTitle, font: .headline, nsFont: .headline, textColor: .white,
+                $musicManager.songTitle, font: .headline, nsFont: .headline, textColor: musicTint,
                 frameWidth: width)
             MarqueeText(
                 $musicManager.artistName,
@@ -245,15 +253,15 @@ struct MusicControlsView: View {
                 MusicManager.shared.toggleShuffle()
             }
         case .previous:
-            HoverButton(icon: "backward.fill", scale: .medium) {
+            HoverButton(icon: "backward.fill", iconColor: musicTint, scale: .medium) {
                 MusicManager.shared.previousTrack()
             }
         case .playPause:
-            HoverButton(icon: musicManager.isPlaying ? "pause.fill" : "play.fill", scale: .large) {
+            HoverButton(icon: musicManager.isPlaying ? "pause.fill" : "play.fill", iconColor: musicTint, scale: .large) {
                 MusicManager.shared.togglePlay()
             }
         case .next:
-            HoverButton(icon: "forward.fill", scale: .medium) {
+            HoverButton(icon: "forward.fill", iconColor: musicTint, scale: .medium) {
                 MusicManager.shared.nextTrack()
             }
         case .repeatMode:
@@ -445,7 +453,7 @@ struct NotchHomeView: View {
 
             if Defaults[.showCalendar] {
                 CalendarView()
-                    .frame(width: shouldShowCamera ? 170 : 215)
+                    .frame(width: 155)
                     .onHover { isHovering in
                         vm.isHoveringCalendar = isHovering
                     }

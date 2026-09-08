@@ -10,34 +10,20 @@ import SwiftUI
 class WebcamManager: NSObject, ObservableObject {
     static let shared = WebcamManager()
     
-    @Published var previewLayer: AVCaptureVideoPreviewLayer? {
-        didSet {
-            objectWillChange.send()
-        }
-    }
+    @Published var previewLayer: AVCaptureVideoPreviewLayer?
     
     private var captureSession: AVCaptureSession?
-    @Published var isSessionRunning: Bool = false {
-        didSet {
-            objectWillChange.send()
-        }
-    }
+    @Published var isSessionRunning: Bool = false
     
-    @Published var authorizationStatus: AVAuthorizationStatus = .notDetermined {
-        didSet {
-            objectWillChange.send()
-        }
-    }
+    @Published var authorizationStatus: AVAuthorizationStatus = .notDetermined
     
-    @Published var cameraAvailable: Bool = false {
-        didSet {
-            objectWillChange.send()
-        }
-    }
+    @Published var cameraAvailable: Bool = false
 
     private let sessionQueue = DispatchQueue(label: "BoringNotch.WebcamManager.SessionQueue", qos: .userInitiated)
     
-    private var isCleaningUp: Bool = false
+    // only accessed on sessionQueue
+    private var isSettingUp: Bool = false
+    private var setupGeneration: Int = 0
     
     // MARK: - Constants
     
@@ -153,7 +139,6 @@ class WebcamManager: NSObject, ObservableObject {
                     NSLog("No video devices available")
                     DispatchQueue.main.async {
                         self.isSessionRunning = false
-                        self.cameraAvailable = false
                     }
                     completion(false)
                     return
@@ -199,7 +184,6 @@ class WebcamManager: NSObject, ObservableObject {
                 NSLog("Failed to setup capture session: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     self.isSessionRunning = false
-                    self.cameraAvailable = false
                     self.previewLayer = nil
                 }
                 completion(false)
@@ -207,43 +191,22 @@ class WebcamManager: NSObject, ObservableObject {
         }
     }
     
-    /// Cleans up an existing capture session, removing all inputs and outputs
     private func cleanupExistingSession() {
-        if let existingSession = self.captureSession {
-            // First stop the session if running
-            if existingSession.isRunning {
-                existingSession.stopRunning()
-            }
-            
-            // Then perform configuration cleanup
-            existingSession.beginConfiguration()
-            
-            // Remove all inputs and outputs
-            for input in existingSession.inputs {
-                existingSession.removeInput(input)
-            }
-            for output in existingSession.outputs {
-                existingSession.removeOutput(output)
-            }
-            
-            existingSession.commitConfiguration()
-            self.captureSession = nil
-            
-            // Clear preview layer on main thread
-            DispatchQueue.main.async {
-                self.previewLayer = nil
-            }
+        guard let existingSession = captureSession else { return }
+        if existingSession.isRunning {
+            existingSession.stopRunning()
+        }
+        captureSession = nil
+        DispatchQueue.main.async {
+            self.previewLayer = nil
         }
     }
 
     @objc private func deviceWasDisconnected(notification: Notification) {
         NSLog("Camera device was disconnected")
-        sessionQueue.async { [weak self] in
-            guard let self = self else { return }
-            self.stopSession()
-            DispatchQueue.main.async {
-                self.cameraAvailable = false
-            }
+        stopSession()
+        DispatchQueue.main.async {
+            self.cameraAvailable = false
         }
     }
 
@@ -265,48 +228,38 @@ class WebcamManager: NSObject, ObservableObject {
     func startSession() {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
-            
-            // If no session exists, create new session
+            guard !self.isSettingUp else { return }
+
             if self.captureSession == nil {
+                self.isSettingUp = true
+                let generation = self.setupGeneration
                 self.setupCaptureSession { success in
-                    if success {
-                        // Only start the session if setup was successful
-                        self.startRunningCaptureSession()
+                    self.sessionQueue.async { [weak self] in
+                        guard let self = self else { return }
+                        self.isSettingUp = false
+                        guard success && self.setupGeneration == generation else { return }
+                        guard let session = self.captureSession, !session.isRunning else { return }
+                        session.startRunning()
+                        self.updateSessionState()
+                        NSLog("Capture session started successfully")
                     }
                 }
-            } else {
-                // Session already exists, just start it
-                self.startRunningCaptureSession()
+            } else if let session = self.captureSession, !session.isRunning {
+                session.startRunning()
+                self.updateSessionState()
             }
         }
     }
-    
-    private func startRunningCaptureSession() {
-        sessionQueue.async { [weak self] in
-            guard let self = self, let session = self.captureSession, !session.isRunning else {
-                return
-            }
-            
-            session.startRunning()
-            
-            // Update state on main thread
-            self.updateSessionState()
-            
-            NSLog("Capture session started successfully")
-        }
-    }
-    
+
     func stopSession() {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
-            
-            // Update state to indicate we're stopping
+            self.isSettingUp = false
+            self.setupGeneration += 1
             DispatchQueue.main.async {
                 self.isSessionRunning = false
             }
-            
             self.cleanupExistingSession()
-            
             NSLog("Capture session stopped and cleaned up")
         }
     }

@@ -11,68 +11,64 @@ struct BatteryView: View {
     var batteryWidth: CGFloat = 26
     var isForNotification: Bool
 
-    var icon: String = "battery.0"
-
-    /// Determines the icon to display when charging.
-    var iconStatus: String {
-        if isCharging {
-            return "bolt"
-        }
-        else if isPluggedIn {
-            return "plug"
-        }
-        else {
-            return ""
-        }
-    }
-
-    /// Determines the color of the battery based on its status.
     var batteryColor: Color {
         if isInLowPowerMode {
             return .yellow
         } else if levelBattery <= 20 && !isCharging && !isPluggedIn {
             return .red
-        } else if isCharging || isPluggedIn || levelBattery == 100 {
-            return .green
         } else {
             return .white
         }
     }
 
-    var body: some View {
-        ZStack(alignment: .leading) {
+    private var showPowerIcon: Bool {
+        (isCharging || isPluggedIn) && (isForNotification || Defaults[.showPowerStatusIcons])
+    }
 
-            Image(systemName: icon)
-                .resizable()
-                .fontWeight(.thin)
-                .aspectRatio(contentMode: .fit)
-                .foregroundColor(.white.opacity(0.5))
-                .frame(
-                    width: batteryWidth + 1
-                )
+    private var fillHeight: CGFloat {
+        max(1, (batteryWidth + 1) * 0.28)
+    }
 
-            RoundedRectangle(cornerRadius: 2.5)
-                .fill(batteryColor)
-                .frame(
-                    width: CGFloat(((CGFloat(CFloat(levelBattery)) / 100) * (batteryWidth - 6))),
-                    height: (batteryWidth - 2.75) - 18
-                )
-                .padding(.leading, 2)
-
-            if iconStatus != "" && (isForNotification || Defaults[.showPowerStatusIcons]) {
-                ZStack {
-                    Image(iconStatus)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .foregroundColor(.white)
-                        .frame(
-                            width: 17,
-                            height: 17
-                        )
-                }
-                .frame(width: batteryWidth, height: batteryWidth)
-            }
+    // White fill + symmetric 8-directional 1.0pt black border = crisp 1px outline.
+    // No explicit height — scaledToFit fills the ZStack height set by the battery SF Symbol.
+    private func powerIconView(name: String) -> some View {
+        let stroke = Color.black.opacity(0.6)
+        return ZStack {
+            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x:  1.0, y:    0)
+            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x: -1.0, y:    0)
+            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x:    0, y:  1.0)
+            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x:    0, y: -1.0)
+            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x:  1.0, y:  1.0)
+            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x: -1.0, y:  1.0)
+            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x:  1.0, y: -1.0)
+            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x: -1.0, y: -1.0)
+            Image(systemName: name).resizable().scaledToFit().foregroundColor(.white)
         }
+    }
+
+    var body: some View {
+        Image(systemName: "battery.0")
+            .resizable()
+            .fontWeight(.thin)
+            .aspectRatio(contentMode: .fit)
+            .foregroundColor(.white.opacity(0.5))
+            .frame(width: batteryWidth + 1)
+            // Fill bar — overlay is proposed exactly the battery image's rendered size.
+            .overlay(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(batteryColor)
+                    .frame(
+                        width: max(0, CGFloat(levelBattery / 100.0) * (batteryWidth - 6)),
+                        height: fillHeight
+                    )
+                    .padding(.leading, 2)
+            }
+            .overlay(alignment: .leading) {
+                if showPowerIcon {
+                    powerIconView(name: isCharging ? "bolt.fill" : "powerplug.portrait.fill")
+                        .frame(width: batteryWidth - 2, alignment: .center)
+                }
+            }
     }
 }
 
@@ -192,7 +188,7 @@ struct BoringBatteryView: View {
                 showPopupMenu.toggle()
             }
         }) {
-            HStack {
+            HStack(spacing: 5) {
                 if Defaults[.showBatteryPercentage] {
                     Text("\(Int32(levelBattery))%")
                         .font(.callout)
@@ -253,15 +249,34 @@ struct BoringBatteryView: View {
     }
 }
 
-#Preview {
-    BoringBatteryView(
-        batteryWidth: 30,
-        isCharging: false,
-        isInLowPowerMode: false,
-        isPluggedIn: true,
-        levelBattery: 80,
-        maxCapacity: 100,
-        timeToFullCharge: 10,
-        isForNotification: false
-    ).frame(width: 200, height: 200)
+#Preview("Battery States") {
+    VStack(spacing: 12) {
+        // Normal 80%
+        HStack(spacing: 5) {
+            Text("80%").font(.callout).foregroundStyle(.white)
+            BatteryView(levelBattery: 80, isPluggedIn: false, isCharging: false, isInLowPowerMode: false, isForNotification: false)
+        }
+        // Charging 50%
+        HStack(spacing: 5) {
+            Text("50%").font(.callout).foregroundStyle(.white)
+            BatteryView(levelBattery: 50, isPluggedIn: true, isCharging: true, isInLowPowerMode: false, isForNotification: false)
+        }
+        // Plugged in, not charging (100%)
+        HStack(spacing: 5) {
+            Text("100%").font(.callout).foregroundStyle(.white)
+            BatteryView(levelBattery: 100, isPluggedIn: true, isCharging: false, isInLowPowerMode: false, isForNotification: false)
+        }
+        // Low battery
+        HStack(spacing: 5) {
+            Text("15%").font(.callout).foregroundStyle(.white)
+            BatteryView(levelBattery: 15, isPluggedIn: false, isCharging: false, isInLowPowerMode: false, isForNotification: false)
+        }
+        // Low power mode
+        HStack(spacing: 5) {
+            Text("60%").font(.callout).foregroundStyle(.white)
+            BatteryView(levelBattery: 60, isPluggedIn: false, isCharging: false, isInLowPowerMode: true, isForNotification: false)
+        }
+    }
+    .padding(20)
+    .background(Color.black)
 }
