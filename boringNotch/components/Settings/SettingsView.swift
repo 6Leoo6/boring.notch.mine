@@ -1218,6 +1218,7 @@ struct Appearance: View {
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     @Default(.mirrorShape) var mirrorShape
     @Default(.sliderColor) var sliderColor
+    @Default(.playerColorTinting) var playerColorTinting
     @Default(.useMusicVisualizer) var useMusicVisualizer
     @Default(.customVisualizers) var customVisualizers
     @Default(.selectedVisualizer) var selectedVisualizer
@@ -1242,21 +1243,27 @@ struct Appearance: View {
             }
 
             Section {
+                Defaults
+                    .Toggle("Player tinting", key: .playerColorTinting)
                 Defaults.Toggle(key: .coloredSpectrogram) {
                     Text("Colored spectrogram")
                 }
-                Defaults
-                    .Toggle("Player tinting", key: .playerColorTinting)
-                Defaults.Toggle(key: .lightingEffect) {
-                    Text("Enable blur effect behind album art")
-                }
+                .disabled(!playerColorTinting)
                 Picker("Slider color", selection: $sliderColor) {
                     ForEach(SliderColorEnum.allCases, id: \.self) { option in
                         Text(option.rawValue)
                     }
                 }
+                .disabled(!playerColorTinting)
+                Defaults.Toggle(key: .lightingEffect) {
+                    Text("Enable blur effect behind album art")
+                }
             } header: {
                 Text("Media")
+            } footer: {
+                Text("Player tinting colors the notch from the album art. Turn it off for a plain white and gray player.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {

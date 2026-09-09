@@ -236,6 +236,7 @@ struct MusicSlotConfigurationView: View {
         case .repeatMode:
             return musicManager.repeatMode != .off ? .red : .primary
         case .favorite:
+            guard musicManager.canFavoriteTrack else { return .secondary.opacity(0.4) }
             return musicManager.isFavoriteTrack ? .red : .primary
         case .playPause:
             return .primary

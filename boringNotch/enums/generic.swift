@@ -29,6 +29,11 @@ public enum NotchViews {
     case shelf
 }
 
+public enum ShelfPanel: String, Defaults.Serializable {
+    case shelf
+    case clipboard
+}
+
 enum SettingsEnum {
     case general
     case about

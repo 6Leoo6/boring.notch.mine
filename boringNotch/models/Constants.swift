@@ -177,6 +177,16 @@ extension Defaults.Keys {
     static let clipboardMaxEntries = Key<Int>("clipboardMaxEntries", default: 50)
     static let clipboardDeleteConfirmEnabled = Key<Bool>("clipboardDeleteConfirmEnabled", default: true)
 
+    // MARK: Tab routing
+    static let autoTabRouting = Key<Bool>("autoTabRouting", default: true)
+    static let lastShelfPanel = Key<ShelfPanel>("lastShelfPanel", default: ShelfPanel.shelf)
+    static let shelfDropBoostMinutes = Key<Int>("shelfDropBoostMinutes", default: 5)
+    static let clipboardCopyBoostSeconds = Key<Int>("clipboardCopyBoostSeconds", default: 60)
+    static let shelfLastDropAt = Key<Date>("shelfLastDropAt", default: .distantPast)
+    static let clipboardLastCopyAt = Key<Date>("clipboardLastCopyAt", default: .distantPast)
+    static let shelfUseScore = Key<Double>("shelfUseScore", default: 0)
+    static let shelfUseScoreAt = Key<Date>("shelfUseScoreAt", default: .distantPast)
+
     // MARK: Calendar
     static let calendarSelectionState = Key<CalendarSelectionState>("calendarSelectionState", default: .all)
     static let hideAllDayEvents = Key<Bool>("hideAllDayEvents", default: false)

@@ -121,10 +121,16 @@ struct MusicControlsView: View {
     @Default(.playerColorTinting) private var playerColorTinting
 
     private static let fallbackWhite = Color.white
+    private static let fallbackActive = Color.red
 
     private var musicTint: Color {
         guard playerColorTinting else { return Self.fallbackWhite }
         return .playerTint(from: musicManager.avgColor, fallback: Self.fallbackWhite)
+    }
+
+    private var musicAccent: Color {
+        guard playerColorTinting else { return Self.fallbackActive }
+        return .playerAccent(from: musicManager.avgColor, fallback: Self.fallbackActive)
     }
 
     var body: some View {
@@ -155,9 +161,8 @@ struct MusicControlsView: View {
                 $musicManager.artistName,
                 font: .headline,
                 nsFont: .headline,
-                textColor: Defaults[.playerColorTinting]
-                    ? Color(nsColor: musicManager.avgColor)
-                        .ensureMinimumBrightness(factor: 0.6) : .gray,
+                textColor: playerColorTinting
+                    ? .playerTint(from: musicManager.avgColor, fallback: .gray) : .gray,
                 frameWidth: width
             )
             .fontWeight(.medium)
@@ -249,7 +254,7 @@ struct MusicControlsView: View {
     private func slotView(for slot: MusicControlButton) -> some View {
         switch slot {
         case .shuffle:
-            HoverButton(icon: "shuffle", iconColor: musicManager.isShuffled ? .red : .primary, scale: .medium) {
+            HoverButton(icon: "shuffle", iconColor: musicManager.isShuffled ? musicAccent : musicTint, scale: .medium) {
                 MusicManager.shared.toggleShuffle()
             }
         case .previous:
@@ -269,15 +274,15 @@ struct MusicControlsView: View {
                 MusicManager.shared.toggleRepeat()
             }
         case .volume:
-            VolumeControlView()
+            VolumeControlView(tint: musicTint)
         case .favorite:
-            FavoriteControlButton()
+            FavoriteControlButton(tint: musicTint, activeTint: musicAccent)
         case .goBackward:
-            HoverButton(icon: "gobackward.15", scale: .medium) {
+            HoverButton(icon: "gobackward.15", iconColor: musicTint, scale: .medium) {
                 MusicManager.shared.skip(seconds: -15)
             }
         case .goForward:
-            HoverButton(icon: "goforward.15", scale: .medium) {
+            HoverButton(icon: "goforward.15", iconColor: musicTint, scale: .medium) {
                 MusicManager.shared.skip(seconds: 15)
             }
         case .none:
@@ -299,30 +304,45 @@ struct MusicControlsView: View {
     private var repeatIconColor: Color {
         switch musicManager.repeatMode {
         case .off:
-            return .primary
+            return musicTint
         case .all, .one:
-            return .red
+            return musicAccent
         }
     }
 }
 
 struct FavoriteControlButton: View {
     @ObservedObject var musicManager = MusicManager.shared
+    var tint: Color = .primary
+    var activeTint: Color = .red
+
+    private static let unsupportedOpacity: Double = 0.35
 
     var body: some View {
         HoverButton(icon: iconName, iconColor: iconColor, scale: .medium) {
             MusicManager.shared.toggleFavoriteTrack()
         }
         .disabled(!musicManager.canFavoriteTrack)
-        .opacity(musicManager.canFavoriteTrack ? 1 : 0.35)
+        .opacity(musicManager.canFavoriteTrack ? 1 : Self.unsupportedOpacity)
+        .help(helpText)
     }
 
     private var iconName: String {
         musicManager.isFavoriteTrack ? "heart.fill" : "heart"
     }
 
+    // Steps outside the album-art palette entirely, so "unsupported" cannot be read
+    // as either the tinted-inactive or the accent-active state.
     private var iconColor: Color {
-        musicManager.isFavoriteTrack ? .red : .primary
+        guard musicManager.canFavoriteTrack else { return .gray }
+        return musicManager.isFavoriteTrack ? activeTint : tint
+    }
+
+    private var helpText: String {
+        guard musicManager.canFavoriteTrack else {
+            return "The current media player doesn't support liking tracks"
+        }
+        return musicManager.isFavoriteTrack ? "Remove from favorites" : "Add to favorites"
     }
 }
 
@@ -337,6 +357,7 @@ private extension Array where Element == MusicControlButton {
 
 struct VolumeControlView: View {
     @ObservedObject var musicManager = MusicManager.shared
+    var tint: Color = .white
     @State private var volumeSliderValue: Double = 0.5
     @State private var dragging: Bool = false
     @State private var showVolumeSlider: Bool = false
@@ -354,7 +375,7 @@ struct VolumeControlView: View {
             }) {
                 Image(systemName: volumeIcon)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(musicManager.volumeControlSupported ? .white : .gray)
+                    .foregroundColor(musicManager.volumeControlSupported ? tint : .gray)
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(!musicManager.volumeControlSupported)
@@ -439,8 +460,6 @@ struct NotchHomeView: View {
                 mainContent
             }
         }
-        // simplified: use a straightforward opacity transition
-        .transition(.opacity)
     }
 
     private var shouldShowCamera: Bool {
@@ -469,7 +488,6 @@ struct NotchHomeView: View {
                     .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.76, blendDuration: 0), value: shouldShowCamera)
             }
         }
-        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
         .blur(radius: vm.notchState == .closed ? 30 : 0)
     }
 }
@@ -486,6 +504,8 @@ struct MusicSliderView: View {
     let playbackRate: Double
     let isPlaying: Bool
     var onValueChange: (Double) -> Void
+    @Default(.playerColorTinting) private var playerColorTinting
+    @Default(.sliderColor) private var sliderColor
 
 
     var body: some View {
@@ -493,9 +513,7 @@ struct MusicSliderView: View {
             CustomSlider(
                 value: $sliderValue,
                 range: 0...duration,
-                color: Defaults[.sliderColor] == SliderColorEnum.albumArt
-                    ? Color(nsColor: color).ensureMinimumBrightness(factor: 0.8)
-                    : Defaults[.sliderColor] == SliderColorEnum.accent ? .effectiveAccent : .white,
+                color: sliderFill,
                 dragging: $dragging,
                 lastDragged: $lastDragged,
                 onValueChange: onValueChange
@@ -509,14 +527,26 @@ struct MusicSliderView: View {
             }
             .fontWeight(.medium)
             .foregroundColor(
-                Defaults[.playerColorTinting]
-                    ? Color(nsColor: color).ensureMinimumBrightness(factor: 0.6) : .gray
+                playerColorTinting
+                    ? .playerTint(from: color, fallback: .gray) : .gray
             )
             .font(.caption)
         }
         .onChange(of: currentDate) {
            guard !dragging, timestampDate.timeIntervalSince(lastDragged) > -1 else { return }
             sliderValue = MusicManager.shared.estimatedPlaybackPosition(at: currentDate)
+        }
+    }
+
+    private var sliderFill: Color {
+        guard playerColorTinting else { return .white }
+        switch sliderColor {
+        case .albumArt:
+            return .playerTint(from: color, fallback: .white, factor: 0.8)
+        case .accent:
+            return .effectiveAccent
+        case .white:
+            return .white
         }
     }
 

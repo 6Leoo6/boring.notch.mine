@@ -107,6 +107,7 @@
 		14E9FEAE2C7325770062E83F /* Button+Bouncing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14E9FEAD2C7325770062E83F /* Button+Bouncing.swift */; };
 		14FC6E502C7DED5600C7BEA5 /* DataTypes+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14FC6E4F2C7DED5600C7BEA5 /* DataTypes+Extensions.swift */; };
 		2C7194D0305096C2002AEAD3 /* ClipboardManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C7194CF305096C2002AEAD3 /* ClipboardManager.swift */; };
+		2CAA00010000000000000002 /* TabRoutingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CAA00010000000000000001 /* TabRoutingManager.swift */; };
 		2C7194D3305096D7002AEAD3 /* ClipboardHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C7194D2305096D7002AEAD3 /* ClipboardHistoryView.swift */; };
 		2C7194D53050A9D3002AEAD3 /* ClipboardPreviewPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C7194D43050A9D3002AEAD3 /* ClipboardPreviewPanel.swift */; };
 		507266DB2C908E2E00A2D00D /* HoverButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 507266DA2C908E2E00A2D00D /* HoverButton.swift */; };
@@ -280,6 +281,7 @@
 		14E9FEAD2C7325770062E83F /* Button+Bouncing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Button+Bouncing.swift"; sourceTree = "<group>"; };
 		14FC6E4F2C7DED5600C7BEA5 /* DataTypes+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DataTypes+Extensions.swift"; sourceTree = "<group>"; };
 		2C7194CF305096C2002AEAD3 /* ClipboardManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardManager.swift; sourceTree = "<group>"; };
+		2CAA00010000000000000001 /* TabRoutingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabRoutingManager.swift; sourceTree = "<group>"; };
 		2C7194D2305096D7002AEAD3 /* ClipboardHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardHistoryView.swift; sourceTree = "<group>"; };
 		2C7194D43050A9D3002AEAD3 /* ClipboardPreviewPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardPreviewPanel.swift; sourceTree = "<group>"; };
 		507266DA2C908E2E00A2D00D /* HoverButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HoverButton.swift; sourceTree = "<group>"; };
@@ -526,6 +528,7 @@
 				B1F0A0012E60000100000001 /* BrightnessManager.swift */,
 				59D8C23B2E589FAA00147B33 /* VolumeManager.swift */,
 				2C7194CF305096C2002AEAD3 /* ClipboardManager.swift */,
+				2CAA00010000000000000001 /* TabRoutingManager.swift */,
 			);
 			path = managers;
 			sourceTree = "<group>";
@@ -1036,6 +1039,7 @@
 				14288E0C2C6F8EC000B9F80C /* AppIcons.swift in Sources */,
 				B1C448982C972CC4001F0858 /* ListItemPopover.swift in Sources */,
 				2C7194D0305096C2002AEAD3 /* ClipboardManager.swift in Sources */,
+				2CAA00010000000000000002 /* TabRoutingManager.swift in Sources */,
 				B19016242CC15B5000E3F12E /* Constants.swift in Sources */,
 				1100290C2E847E2800035A57 /* NSItemProvider+LoadHelpers.swift in Sources */,
 				11CFC6632E09918400748C80 /* MusicControllerSelectionView.swift in Sources */,

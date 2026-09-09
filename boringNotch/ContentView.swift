@@ -40,6 +40,9 @@ struct ContentView: View {
 
     @Default(.showNotHumanFace) var showNotHumanFace
 
+    // Master gate for every coloured element in the player UI
+    @Default(.playerColorTinting) var playerColorTinting
+
     // Shared interactive spring for movement/resizing to avoid conflicting animations
     private let animationSpring = Animation.interactiveSpring(response: 0.38, dampingFraction: 0.8, blendDuration: 0)
 
@@ -59,6 +62,11 @@ struct ContentView: View {
                 ? cornerRadiusInsets.opened.bottom
                 : cornerRadiusInsets.closed.bottom
         )
+    }
+
+    // Extra island height requested by an expanded clipboard preview
+    private var clipboardPreviewExpansion: CGFloat {
+        (vm.notchState == .open && coordinator.clipboardPreviewEntry != nil) ? clipboardPreviewHeight : 0
     }
 
     private var computedChinWidth: CGFloat {
@@ -103,6 +111,9 @@ struct ContentView: View {
                         : cornerRadiusInsets.closed.bottom
                     )
                     .padding([.horizontal, .bottom], vm.notchState == .open ? 12 : 0)
+                    // Padding rather than a taller frame, so the preview band is empty island
+                    // surface instead of the tab content being stretched down into it
+                    .padding(.bottom, clipboardPreviewExpansion)
                     .background(.black)
                     .clipShape(currentNotchShape)
                     .overlay(alignment: .top) {
@@ -121,7 +132,7 @@ struct ContentView: View {
                     )
                 
                 mainLayout
-                    .frame(height: vm.notchState == .open ? vm.notchSize.height + (coordinator.clipboardPreviewEntry != nil ? clipboardPreviewHeight : 0) : nil)
+                    .frame(height: vm.notchState == .open ? vm.notchSize.height + clipboardPreviewExpansion : nil)
                     .conditionalModifier(true) { view in
                         let openAnimation = Animation.spring(response: 0.42, dampingFraction: 0.8, blendDuration: 0)
                         let closeAnimation = Animation.spring(response: 0.45, dampingFraction: 1.0, blendDuration: 0)
@@ -406,6 +417,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .frame(height: clipboardPreviewHeight)
+                .background(.black)
                 .padding(.top, vm.notchSize.height)
                 .transition(.opacity)
             }
@@ -459,8 +471,9 @@ struct ContentView: View {
                         {
                             MarqueeText(
                                 .constant(musicManager.songTitle),
-                                textColor: Defaults[.coloredSpectrogram]
-                                    ? Color(nsColor: musicManager.avgColor) : Color.gray,
+                                textColor: playerColorTinting && Defaults[.coloredSpectrogram]
+                                    ? .playerTint(from: musicManager.avgColor, fallback: .gray)
+                                    : Color.gray,
                                 minDuration: 0.4,
                                 frameWidth: 100
                             )
@@ -475,8 +488,8 @@ struct ContentView: View {
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                                 .foregroundStyle(
-                                    Defaults[.coloredSpectrogram]
-                                        ? Color(nsColor: musicManager.avgColor)
+                                    playerColorTinting && Defaults[.coloredSpectrogram]
+                                        ? Color.playerTint(from: musicManager.avgColor, fallback: .gray)
                                         : Color.gray
                                 )
                                 .opacity(
@@ -501,8 +514,8 @@ struct ContentView: View {
                 if useMusicVisualizer {
                     Rectangle()
                         .fill(
-                            Defaults[.coloredSpectrogram]
-                                ? Color(nsColor: musicManager.avgColor).gradient
+                            playerColorTinting && Defaults[.coloredSpectrogram]
+                                ? Color.playerTint(from: musicManager.avgColor, fallback: .gray).gradient
                                 : Color.gray.gradient
                         )
                         .frame(width: 50, alignment: .center)
@@ -552,6 +565,11 @@ struct ContentView: View {
     }
 
     private func doOpen() {
+        // Fire on the real closed -> open transition, so the haptic lands with the
+        // opening animation rather than when the cursor merely enters the hover zone.
+        if vm.notchState == .closed && Defaults[.enableHaptics] {
+            haptics.toggle()
+        }
         withAnimation(animationSpring) {
             vm.open()
         }
@@ -567,11 +585,7 @@ struct ContentView: View {
             withAnimation(animationSpring) {
                 isHovering = true
             }
-            
-            if vm.notchState == .closed && Defaults[.enableHaptics] {
-                haptics.toggle()
-            }
-            
+
             guard vm.notchState == .closed,
                   !coordinator.sneakPeek.show,
                   Defaults[.openNotchOnHover] else { return }

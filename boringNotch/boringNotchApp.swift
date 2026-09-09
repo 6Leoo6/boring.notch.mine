@@ -226,9 +226,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if Defaults[.showOnAllDisplays], let viewModel = viewModels[uuid] {
             viewModel.open()
             coordinator.currentView = .shelf
+            TabRoutingManager.shared.prepareForDrop()
         } else if !Defaults[.showOnAllDisplays], let windowScreen = window?.screen, screen == windowScreen {
             vm.open()
             coordinator.currentView = .shelf
+            TabRoutingManager.shared.prepareForDrop()
         }
     }
 

@@ -191,16 +191,18 @@ class BoringViewModel: NSObject, ObservableObject {
     }
 
     func open() {
+        let wasClosed = notchState == .closed
+
         self.notchSize = openNotchSize
         self.notchState = .open
 
-        // Decide which tab to show each time the notch opens.
+        // Route only on a real closed -> open transition. `open()` is also called while
+        // already open (a tap on the island routes through doOpen), and re-routing there
+        // would change the tab under the user mid-interaction.
         // Doing this here (not in close()) prevents a race where close() resets
         // the tab right after the user has just switched it.
-        if !ShelfStateViewModel.shared.isEmpty && Defaults[.openShelfByDefault] {
-            coordinator.currentView = .shelf
-        } else if !coordinator.openLastTabByDefault {
-            coordinator.currentView = .home
+        if wasClosed {
+            coordinator.currentView = TabRoutingManager.shared.routeOnOpen(current: coordinator.currentView)
         }
 
         MusicManager.shared.forceUpdate()

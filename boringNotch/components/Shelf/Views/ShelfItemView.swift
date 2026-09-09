@@ -13,6 +13,7 @@ import QuickLook
 
 struct ShelfItemView: View {
     let item: ShelfItem
+    let tileSize: CGFloat
     @EnvironmentObject var vm: BoringViewModel
     @ObservedObject var selection = ShelfSelectionModel.shared
     @StateObject private var viewModel: ShelfItemViewModel
@@ -24,21 +25,21 @@ struct ShelfItemView: View {
     private var isSelected: Bool { viewModel.isSelected }
     private var shouldHideDuringDrag: Bool { selection.isDragging && selection.isSelected(item.id) && false }
     
-    init(item: ShelfItem) {
+    init(item: ShelfItem, tileSize: CGFloat) {
         self.item = item
+        self.tileSize = tileSize
         _viewModel = StateObject(wrappedValue: ShelfItemViewModel(item: item))
     }
 
     var body: some View {
         ZStack {
             if !shouldHideDuringDrag {
-                VStack(alignment: .center, spacing: 2) {
+                VStack(alignment: .center, spacing: ShelfItemMetrics.iconLabelSpacing) {
                     iconView
                     textView
                 }
-                .frame(width: 105)
-                .padding(.vertical, 10)
-                .padding(.horizontal, 5)
+                .padding(ShelfItemMetrics.tilePadding)
+                .frame(width: tileSize, height: tileSize)
                 .background(backgroundView)
                 .contentShape(Rectangle())
                 .animation(.easeInOut(duration: 0.1), value: debouncedDropTarget)
@@ -58,9 +59,7 @@ struct ShelfItemView: View {
                 )
             } else {
                 Color.clear
-                    .frame(width: 105)
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 5)
+                    .frame(width: tileSize, height: tileSize)
             }
         }
         .onChange(of: viewModel.isDropTargeted) { _, targeted in
@@ -94,30 +93,33 @@ struct ShelfItemView: View {
 
     // MARK: - View Components
 
+    private var iconSide: CGFloat { ShelfItemMetrics.iconSide(forTile: tileSize) }
+
     private var iconView: some View {
         Image(nsImage: viewModel.thumbnail ?? item.icon)
             .resizable()
+            .interpolation(.high)
             .aspectRatio(contentMode: .fit)
-            .frame(width: 56, height: 56)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .frame(width: iconSide, height: iconSide)
+            .clipShape(RoundedRectangle(cornerRadius: ShelfItemMetrics.cornerRadius))
             .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
     }
 
     private var textView: some View {
         Text(item.displayName)
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: ShelfItemMetrics.labelFontSize, weight: .medium))
             .foregroundStyle(.primary)
-            .lineLimit(2)
+            .lineLimit(ShelfItemMetrics.labelLineCount)
             .truncationMode(.middle)
             .multilineTextAlignment(.center)
-            .frame(height: 30, alignment: .top)
+            .frame(maxWidth: .infinity, minHeight: ShelfItemMetrics.labelHeight, maxHeight: ShelfItemMetrics.labelHeight, alignment: .top)
     }
 
     private var backgroundView: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
+        RoundedRectangle(cornerRadius: ShelfItemMetrics.cornerRadius, style: .continuous)
             .fill(backgroundColor)
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: ShelfItemMetrics.cornerRadius, style: .continuous)
                     .strokeBorder(
                         strokeColor,
                         lineWidth: strokeWidth

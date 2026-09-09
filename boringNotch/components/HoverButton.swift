@@ -14,6 +14,7 @@ struct HoverButton: View {
     var action: () -> Void
     var contentTransition: ContentTransition = .symbolEffect;
     
+    @Environment(\.isEnabled) private var isEnabled
     @State private var isHovering = false
 
     var body: some View {
@@ -26,7 +27,7 @@ struct HoverButton: View {
                 .frame(width: size, height: size)
                 .overlay {
                     Capsule()
-                        .fill(isHovering ? Color.gray.opacity(0.2) : .clear)
+                        .fill(isHovering && isEnabled ? Color.gray.opacity(0.2) : .clear)
                         .frame(width: size, height: size)
                         .overlay {
                             Image(systemName: icon)

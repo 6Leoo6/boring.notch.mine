@@ -253,6 +253,7 @@ final class ClipboardManager: ObservableObject {
 
     private func addEntry(_ entry: ClipboardEntry, imageSource: Data? = nil) {
         items.insert(entry, at: 0)
+        TabRoutingManager.shared.clipboardDidCapture()
         if let imageSource {
             let filename = ClipboardPaths.imageFilename(for: entry.id)
             Task { await ClipboardStore.shared.writeImage(imageSource, filename: filename) }
@@ -272,10 +273,24 @@ final class ClipboardManager: ObservableObject {
         )
         items.remove(at: index)
         items.insert(refreshed, at: 0)
+        TabRoutingManager.shared.clipboardDidCapture()
         persist()
     }
 
     // MARK: - Public API
+
+    /// Puts objects on the system pasteboard without recording them in history.
+    ///
+    /// The pasteboard's change count is claimed here, so the poller sees the write as
+    /// already handled. Unlike marking the write transient, this keeps the content a
+    /// normal clipboard entry for every other app — only this app's history skips it.
+    func copyWithoutRecording(_ objects: [NSPasteboardWriting]) {
+        guard !objects.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.writeObjects(objects)
+        lastChangeCount = pb.changeCount
+    }
 
     func copy(_ entry: ClipboardEntry) {
         let pb = NSPasteboard.general

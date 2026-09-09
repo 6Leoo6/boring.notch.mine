@@ -1,15 +1,42 @@
-import SwiftUI
+import AppKit
 import Defaults
+import SwiftUI
 
-/// A view that displays the battery status with an icon and charging indicator.
+/// The battery glyph the macOS menu bar draws, reproduced from the same SF Symbol.
+///
+/// `battery.100percent` at `.light` weight is the menu bar's shape. Under
+/// `.symbolRenderingMode(.palette)` its first layer is the fill bar and its second the
+/// outline plus terminal nub, and `.resizable()` lays the ink out exactly on the proposed
+/// frame — so the outline needs no hand-measured geometry at all.
+///
+/// The level is the fill layer intersected with a copy of itself shifted left by the unused
+/// part of the track. Both ends of the bar therefore keep Apple's own rounding, and the only
+/// measured constant left is how wide that track is.
 struct BatteryView: View {
 
     var levelBattery: Float
     var isPluggedIn: Bool
     var isCharging: Bool
     var isInLowPowerMode: Bool
-    var batteryWidth: CGFloat = 26
+    /// Ink width of the glyph in points; the height follows from `aspectRatio`.
+    var batteryWidth: CGFloat = BatteryView.menuBarWidth
     var isForNotification: Bool
+
+    /// Ink width of the menu bar's battery, measured off a 2x screenshot: 51 px.
+    static let menuBarWidth: CGFloat = 25.5
+    /// Layout aspect of `battery.100percent`; its ink fills that box exactly.
+    static let aspectRatio: CGFloat = 19.0 / 9.0
+    /// Layout aspect of `battery.100percent.bolt`, whose bolt overhangs the outline.
+    private static let chargingAspectRatio: CGFloat = 19.0 / 12.0
+
+    private static let symbolName = "battery.100percent"
+    private static let chargingSymbolName = "battery.100percent.bolt"
+    /// Width of the fill bar at 100%, as a fraction of the ink width.
+    private static let trackWidthFraction: CGFloat = 0.73971
+    private static let plugHeightFraction: CGFloat = 0.66
+    private static let plugKnockoutScale: CGFloat = 1.35
+    /// Centre of the outline's body, excluding the terminal nub — where Apple puts the bolt.
+    private static let bodyCentreFraction: CGFloat = 0.45221
 
     var batteryColor: Color {
         if isInLowPowerMode {
@@ -21,151 +48,110 @@ struct BatteryView: View {
         }
     }
 
+    private var shellColor: Color {
+        .white.opacity(0.5)
+    }
+
     private var showPowerIcon: Bool {
         (isCharging || isPluggedIn) && (isForNotification || Defaults[.showPowerStatusIcons])
     }
 
-    private var fillHeight: CGFloat {
-        max(1, (batteryWidth + 1) * 0.28)
+    private var height: CGFloat {
+        batteryWidth / Self.aspectRatio
     }
 
-    // White fill + symmetric 8-directional 1.0pt black border = crisp 1px outline.
-    // No explicit height — scaledToFit fills the ZStack height set by the battery SF Symbol.
-    private func powerIconView(name: String) -> some View {
-        let stroke = Color.black.opacity(0.6)
-        return ZStack {
-            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x:  1.0, y:    0)
-            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x: -1.0, y:    0)
-            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x:    0, y:  1.0)
-            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x:    0, y: -1.0)
-            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x:  1.0, y:  1.0)
-            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x: -1.0, y:  1.0)
-            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x:  1.0, y: -1.0)
-            Image(systemName: name).resizable().scaledToFit().foregroundColor(stroke).offset(x: -1.0, y: -1.0)
-            Image(systemName: name).resizable().scaledToFit().foregroundColor(.white)
-        }
-    }
-
-    var body: some View {
-        Image(systemName: "battery.0")
+    /// One palette layer set of a battery symbol. The frame is fully specified because
+    /// `.overlay`/`.background` propose the *outline's* height, which would otherwise shrink
+    /// the taller charging symbol to fit.
+    private func symbol(_ name: String, aspect: CGFloat,
+                        _ primary: Color, _ secondary: Color, _ tertiary: Color) -> some View {
+        Image(systemName: name)
             .resizable()
-            .fontWeight(.thin)
+            .fontWeight(.light)
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(primary, secondary, tertiary)
+            .frame(width: batteryWidth, height: batteryWidth / aspect)
+    }
+
+    private func battery(fill: Color, shell: Color) -> some View {
+        symbol(Self.symbolName, aspect: Self.aspectRatio, fill, shell, .clear)
+    }
+
+    private func chargingBattery(bolt: Color, shell: Color, fill: Color) -> some View {
+        symbol(Self.chargingSymbolName, aspect: Self.chargingAspectRatio, bolt, shell, fill)
+    }
+
+    private var plugGlyph: some View {
+        Image(systemName: "powerplug.portrait.fill")
+            .resizable()
             .aspectRatio(contentMode: .fit)
-            .foregroundColor(.white.opacity(0.5))
-            .frame(width: batteryWidth + 1)
-            // Fill bar — overlay is proposed exactly the battery image's rendered size.
-            .overlay(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(batteryColor)
-                    .frame(
-                        width: max(0, CGFloat(levelBattery / 100.0) * (batteryWidth - 6)),
-                        height: fillHeight
-                    )
-                    .padding(.leading, 2)
-            }
-            .overlay(alignment: .leading) {
-                if showPowerIcon {
-                    powerIconView(name: isCharging ? "bolt.fill" : "powerplug.portrait.fill")
-                        .frame(width: batteryWidth - 2, alignment: .center)
+            .foregroundStyle(batteryColor)
+            .frame(width: batteryWidth, height: height * Self.plugHeightFraction)
+            .offset(x: (Self.bodyCentreFraction - 0.5) * batteryWidth)
+    }
+
+    /// The fill bar, clipped to `levelBattery`. When charging this uses Apple's charging
+    /// composite, whose fill layer already has the bolt knocked out of it; for the
+    /// plugged-in-but-not-charging plug the same gap is punched with a dilated copy.
+    private var fillBar: some View {
+        let level = CGFloat(min(max(levelBattery, 0), 100)) / 100
+        return Group {
+            if showPowerIcon && isCharging {
+                chargingBattery(bolt: .clear, shell: .clear, fill: batteryColor)
+            } else if showPowerIcon {
+                ZStack {
+                    battery(fill: batteryColor, shell: .clear)
+                    plugGlyph
+                        .scaleEffect(Self.plugKnockoutScale)
+                        .blendMode(.destinationOut)
                 }
+                .compositingGroup()
+            } else {
+                battery(fill: batteryColor, shell: .clear)
             }
+        }
+        .mask {
+            battery(fill: .white, shell: .clear)
+                .offset(x: -batteryWidth * Self.trackWidthFraction * (1 - level))
+        }
     }
-}
 
-struct ScaleButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-            .animation(.easeInOut(duration: 0.2), value: configuration.isPressed)
+    /// While charging the outline also comes from the charging composite, which carries
+    /// Apple's gap in the outline where the bolt crosses it.
+    private var outline: some View {
+        Group {
+            if showPowerIcon && isCharging {
+                chargingBattery(bolt: .clear, shell: shellColor, fill: .clear)
+            } else {
+                battery(fill: .clear, shell: shellColor)
+            }
+        }
     }
-}
 
-/// A view that displays detailed battery information and settings.
-struct BatteryMenuView: View {
-    
-    var isPluggedIn: Bool
-    var isCharging: Bool
-    var levelBattery: Float
-    var maxCapacity: Float
-    var timeToFullCharge: Int
-    var isInLowPowerMode: Bool
-    var onDismiss: () -> Void
-
-    @Environment(\.openURL) private var openURL
+    @ViewBuilder private var powerGlyph: some View {
+        if showPowerIcon {
+            if isCharging {
+                chargingBattery(bolt: batteryColor, shell: .clear, fill: .clear)
+            } else {
+                plugGlyph
+            }
+        }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-
-            HStack {
-                Text("Battery Status")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                Spacer()
-                Text("\(Int(levelBattery))%")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-            }
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Max Capacity: \(Int(maxCapacity))%")
-                    .font(.subheadline)
-                    .fontWeight(.regular)
-                if isInLowPowerMode {
-                    Label("Low Power Mode", systemImage: "bolt.circle")
-                        .font(.subheadline)
-                        .fontWeight(.regular)
-                }
-                if isCharging {
-                    Label("Charging", systemImage: "bolt.fill")
-                        .font(.subheadline)
-                        .fontWeight(.regular)
-                }
-                if isPluggedIn {
-                    Label("Plugged In", systemImage: "powerplug.fill")
-                        .font(.subheadline)
-                        .fontWeight(.regular)
-                }
-                if timeToFullCharge > 0 {
-                    Label("Time to Full Charge: \(timeToFullCharge) min", systemImage: "clock")
-                        .font(.subheadline)
-                        .fontWeight(.regular)
-                }
-                if !isCharging && isPluggedIn && levelBattery >= 80 {
-                    Label("Charging on Hold: Desktop Mode", systemImage: "desktopcomputer")
-                        .font(.subheadline)
-                        .fontWeight(.regular)
-                }
-                    
-            }
-            .padding(.vertical, 8)
-
-            Divider().background(Color.white)
-
-            Button(action: openBatteryPreferences) {
-                Label("Battery Settings", systemImage: "gearshape")
-                    .fontWeight(.regular)
-            }
-            .frame(maxWidth: .infinity)
-            .buttonStyle(.plain)
-            .padding(.vertical, 8)
+        ZStack {
+            fillBar
+            outline
+            powerGlyph
         }
-        .padding()
-        .frame(width: 280)
-        .foregroundColor(.white)
-    }
-
-    private func openBatteryPreferences() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.battery") {
-            openURL(url)
-            onDismiss()
-        }
+        .frame(width: batteryWidth, height: height)
     }
 }
 
-/// A view that displays the battery status and allows interaction to show detailed information.
+/// A view that displays the battery status.
 struct BoringBatteryView: View {
-    
-    @State var batteryWidth: CGFloat = 26
+
+    @State var batteryWidth: CGFloat = BatteryView.menuBarWidth
     var isCharging: Bool = false
     var isInLowPowerMode: Bool = false
     var isPluggedIn: Bool = false
@@ -173,108 +159,64 @@ struct BoringBatteryView: View {
     var maxCapacity: Float = 0
     var timeToFullCharge: Int = 0
     @State var isForNotification: Bool = false
-    
-    @State private var showPopupMenu: Bool = false
-    @State private var isPressed: Bool = false
-    @State private var isHoveringButton: Bool = false
-    @State private var isHoveringPopover: Bool = false
-    @State private var hideTask: Task<Void, Never>? = nil
 
-    @EnvironmentObject var vm: BoringViewModel
+    private static let labelPointSize: CGFloat = NSFont.preferredFont(forTextStyle: .callout).pointSize
 
-    var body: some View {
-        Button(action: {
-            withAnimation {
-                showPopupMenu.toggle()
-            }
-        }) {
-            HStack(spacing: 5) {
-                if Defaults[.showBatteryPercentage] {
-                    Text("\(Int32(levelBattery))%")
-                        .font(.callout)
-                        .foregroundStyle(.white)
-                }
-                BatteryView(
-                    levelBattery: levelBattery,
-                    isPluggedIn: isPluggedIn,
-                    isCharging: isCharging,
-                    isInLowPowerMode: isInLowPowerMode,
-                    batteryWidth: batteryWidth,
-                    isForNotification: isForNotification
-                )
-            }
-        }
-        .buttonStyle(ScaleButtonStyle())
-        .popover(
-            isPresented: $showPopupMenu,
-            arrowEdge: .bottom) {
-            BatteryMenuView(
-                isPluggedIn: isPluggedIn,
-                isCharging: isCharging,
-                levelBattery: levelBattery,
-                maxCapacity: maxCapacity,
-                timeToFullCharge: timeToFullCharge,
-                isInLowPowerMode: isInLowPowerMode,
-                onDismiss: { 
-                    showPopupMenu = false
-                }
-            )
-            .onHover { hovering in
-                isHoveringPopover = hovering
-                if hovering {
-                    hideTask?.cancel()
-                    hideTask = nil
-                } else {
-                    scheduleHideIfNeeded()
-                }
-            }
-        }
-        .onChange(of: showPopupMenu) {
-            vm.isBatteryPopoverActive = showPopupMenu
-        }
-        .onDisappear {
-            hideTask?.cancel()
-            hideTask = nil
-        }
+    /// The menu bar pairs its 25.5 pt battery with 12 pt text, so the glyph tracks the
+    /// label's point size. `batteryWidth` is the explicit ink width used when there is no
+    /// label to scale against.
+    private var iconWidth: CGFloat {
+        guard Defaults[.showBatteryPercentage] else { return batteryWidth }
+        return Self.labelPointSize * (BatteryView.menuBarWidth / 12)
     }
 
-    private func scheduleHideIfNeeded() {
-        if isHoveringButton || isHoveringPopover { return }
-        hideTask?.cancel()
-        hideTask = Task {
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled else { return }
-            await MainActor.run { withAnimation { showPopupMenu = false } }
+    var body: some View {
+        // 4 pt of spacing plus the "%" side bearing lands on the menu bar's 5 pt visual gap.
+        HStack(spacing: 4) {
+            if Defaults[.showBatteryPercentage] {
+                Text("\(Int32(levelBattery))%")
+                    .font(.callout)
+                    .foregroundStyle(.white)
+            }
+            BatteryView(
+                levelBattery: levelBattery,
+                isPluggedIn: isPluggedIn,
+                isCharging: isCharging,
+                isInLowPowerMode: isInLowPowerMode,
+                batteryWidth: iconWidth,
+                isForNotification: isForNotification
+            )
         }
     }
 }
 
 #Preview("Battery States") {
-    VStack(spacing: 12) {
-        // Normal 80%
-        HStack(spacing: 5) {
-            Text("80%").font(.callout).foregroundStyle(.white)
-            BatteryView(levelBattery: 80, isPluggedIn: false, isCharging: false, isInLowPowerMode: false, isForNotification: false)
-        }
-        // Charging 50%
-        HStack(spacing: 5) {
-            Text("50%").font(.callout).foregroundStyle(.white)
-            BatteryView(levelBattery: 50, isPluggedIn: true, isCharging: true, isInLowPowerMode: false, isForNotification: false)
-        }
-        // Plugged in, not charging (100%)
-        HStack(spacing: 5) {
-            Text("100%").font(.callout).foregroundStyle(.white)
-            BatteryView(levelBattery: 100, isPluggedIn: true, isCharging: false, isInLowPowerMode: false, isForNotification: false)
-        }
-        // Low battery
-        HStack(spacing: 5) {
-            Text("15%").font(.callout).foregroundStyle(.white)
-            BatteryView(levelBattery: 15, isPluggedIn: false, isCharging: false, isInLowPowerMode: false, isForNotification: false)
-        }
-        // Low power mode
-        HStack(spacing: 5) {
-            Text("60%").font(.callout).foregroundStyle(.white)
-            BatteryView(levelBattery: 60, isPluggedIn: false, isCharging: false, isInLowPowerMode: true, isForNotification: false)
+    VStack(alignment: .trailing, spacing: 12) {
+        ForEach(
+            [
+                ("100%", Float(100), false, false, false),
+                ("54%", Float(54), false, false, false),
+                ("20%", Float(20), false, false, false),
+                ("5%", Float(5), false, false, false),
+                ("60% low power", Float(60), false, false, true),
+                ("50% charging", Float(50), true, true, false),
+                ("100% plugged in", Float(100), false, true, false),
+            ],
+            id: \.0
+        ) { label, level, charging, plugged, lowPower in
+            HStack(spacing: 12) {
+                Text(label).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text("\(Int32(level))%").font(.callout).foregroundStyle(.white)
+                    BatteryView(
+                        levelBattery: level,
+                        isPluggedIn: plugged,
+                        isCharging: charging,
+                        isInLowPowerMode: lowPower,
+                        isForNotification: true
+                    )
+                }
+            }
         }
     }
     .padding(20)

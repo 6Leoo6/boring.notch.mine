@@ -41,6 +41,7 @@ final class ShelfStateViewModel: ObservableObject {
             }
         }
         items = merged
+        TabRoutingManager.shared.shelfDidReceiveItems()
     }
 
     func remove(_ item: ShelfItem) {

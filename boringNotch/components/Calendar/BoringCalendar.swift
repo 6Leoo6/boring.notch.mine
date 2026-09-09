@@ -5,6 +5,7 @@
 //  Created by Harsh Vardhan  Goswami  on 08/09/24.
 //
 
+import AppKit
 import Defaults
 import SwiftUI
 
@@ -27,12 +28,15 @@ struct CalendarView: View {
         return .playerTint(from: musicManager.avgColor, fallback: Self.fallbackRed)
     }
 
-    // Text color that contrasts against the calendarAccent circle fill
+    // Text color that contrasts against the calendarAccent circle fill. Measured off
+    // the resolved accent, not the raw artwork: playerTint normalises luminance to
+    // 0.6, so dark artwork paints a light circle that raw luminance would misjudge.
+    // The red fallback keeps white text to match the macOS Calendar badge.
     private var todayTextColor: Color {
         guard playerColorTinting,
-              let luminance = musicManager.avgColor.srgbLuminance,
-              luminance < 0.9 else { return .white }
-        return luminance > 0.5 ? .black : .white
+              let luminance = NSColor(calendarAccent).srgbLuminance,
+              luminance > 0.5 else { return .white }
+        return .black
     }
 
     private var displayMonth: Date {
@@ -96,6 +100,10 @@ struct CalendarView: View {
                 }
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            openSystemCalendar(at: selectedDate)
+        }
         .background(
             GeometryReader { geo in
                 Color.clear.onAppear { calendarWidth = geo.size.width }
@@ -124,9 +132,7 @@ struct CalendarView: View {
         let isWeekend = column >= 5
 
         return Button(action: {
-            if let url = URL(string: "calshow://\(date.timeIntervalSinceReferenceDate)") {
-                NSWorkspace.shared.open(url)
-            }
+            openSystemCalendar(at: date)
         }) {
             ZStack {
                 if isToday {
@@ -146,6 +152,19 @@ struct CalendarView: View {
             .frame(maxWidth: .infinity, minHeight: 16)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+
+    // `calshow:` is no longer registered with LaunchServices on current macOS. Opening it
+    // unhandled raises a system alert, so only attempt it when a handler actually exists;
+    // otherwise launch Calendar.app directly.
+    private func openSystemCalendar(at date: Date) {
+        if let url = URL(string: "calshow:\(date.timeIntervalSinceReferenceDate)"),
+           NSWorkspace.shared.urlForApplication(toOpen: url) != nil,
+           NSWorkspace.shared.open(url) {
+            return
+        }
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.iCal") else { return }
+        NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
     }
 }
 
