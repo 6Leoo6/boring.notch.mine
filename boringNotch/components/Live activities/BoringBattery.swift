@@ -33,7 +33,8 @@ struct BatteryView: View {
     private static let chargingSymbolName = "battery.100percent.bolt"
     /// Width of the fill bar at 100%, as a fraction of the ink width.
     private static let trackWidthFraction: CGFloat = 0.73971
-    private static let plugHeightFraction: CGFloat = 0.66
+    /// Plug height relative to the outline, measured from the user's reference: 1.065.
+    private static let plugHeightFraction: CGFloat = 1.065
     private static let plugKnockoutScale: CGFloat = 1.35
     /// Centre of the outline's body, excluding the terminal nub — where Apple puts the bolt.
     private static let bodyCentreFraction: CGFloat = 0.45221
@@ -98,14 +99,6 @@ struct BatteryView: View {
         return Group {
             if showPowerIcon && isCharging {
                 chargingBattery(bolt: .clear, shell: .clear, fill: batteryColor)
-            } else if showPowerIcon {
-                ZStack {
-                    battery(fill: batteryColor, shell: .clear)
-                    plugGlyph
-                        .scaleEffect(Self.plugKnockoutScale)
-                        .blendMode(.destinationOut)
-                }
-                .compositingGroup()
             } else {
                 battery(fill: batteryColor, shell: .clear)
             }
@@ -138,10 +131,27 @@ struct BatteryView: View {
         }
     }
 
+    /// Apple's charging composite carries its own gap in the outline where the bolt crosses.
+    /// The plug has no such composite, so a dilated copy is punched through fill and outline
+    /// together — cutting the outline, not just the fill, is what the reference shows.
+    @ViewBuilder private var plugKnockout: some View {
+        if showPowerIcon && !isCharging {
+            plugGlyph
+                .scaleEffect(Self.plugKnockoutScale)
+                .blendMode(.destinationOut)
+        }
+    }
+
     var body: some View {
         ZStack {
-            fillBar
-            outline
+            ZStack {
+                fillBar
+                outline
+            }
+            .compositingGroup()
+            .overlay { plugKnockout }
+            .compositingGroup()
+
             powerGlyph
         }
         .frame(width: batteryWidth, height: height)
