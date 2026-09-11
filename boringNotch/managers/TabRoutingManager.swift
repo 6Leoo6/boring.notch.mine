@@ -3,14 +3,15 @@
 //  boringNotch
 //
 
+import AppKit
 import Defaults
 import Foundation
 
 /// Decides which tab — and which shelf panel — the notch shows when it opens.
 ///
 /// Signals are ranked: a drop on the shelf outranks sustained shelf use, which outranks a
-/// recent copy. Each one expires, and a panel is only ever chosen if it has something to
-/// show, so an empty side always yields to the other.
+/// recent copy, which outranks music playing. Each of the first three expires, and a panel is
+/// only ever chosen if it has something to show, so an empty side always yields to the other.
 @MainActor
 final class TabRoutingManager: ObservableObject {
     static let shared = TabRoutingManager()
@@ -48,9 +49,28 @@ final class TabRoutingManager: ObservableObject {
 
     /// Tab to show for a notch that is opening. `current` is kept when the user has asked
     /// for the last tab to be remembered and nothing stronger applies.
-    func routeOnOpen(current: NotchViews) -> NotchViews {
+    ///
+    /// `trigger` gates the modifier override and nothing else — see `NotchOpenTrigger`.
+    func routeOnOpen(current: NotchViews, trigger: NotchOpenTrigger = .system) -> NotchViews {
         let shelfHasItems = !ShelfStateViewModel.shared.isEmpty
         let clipboardHasItems = Defaults[.clipboardHistoryEnabled] && !ClipboardManager.shared.items.isEmpty
+
+        // Ahead of every signal AND of the `autoTabRouting` switch: holding the key is the
+        // most explicit statement of intent there is, so it cannot be outvoted by a recent
+        // copy, a recent drop, or playback.
+        if trigger == .pointer, let forced = heldModifierRoute() {
+            switch forced {
+            case .home:
+                return .home
+            case .shelf, .clipboard:
+                // `automatic: false` — this is a manual pick, so switching away from it must
+                // not retire the signal that would otherwise have routed here.
+                apply(forced == .clipboard ? .clipboard : .shelf, automatic: false)
+                return .shelf
+            case .off:
+                break
+            }
+        }
 
         guard Defaults[.autoTabRouting] else {
             return legacyRoute(current: current, shelfHasItems: shelfHasItems)
@@ -60,6 +80,12 @@ final class TabRoutingManager: ObservableObject {
             apply(panel, automatic: true)
             return .shelf
         }
+
+        // Playback puts the player on screen, and the player lives on home. Ranked LAST of the
+        // signals on purpose: the three above are each a deliberate act with an expiry, while
+        // playback is an ambient state that can hold for hours — so it decides the tab only
+        // when nothing more specific does, and cannot hijack a routing the user just earned.
+        if MusicManager.shared.isPlaying { return .home }
 
         // Nothing to show on either side — the shelf tab would just be an empty state.
         guard shelfHasItems || clipboardHasItems else { return .home }
@@ -87,6 +113,43 @@ final class TabRoutingManager: ObservableObject {
     /// Forces the shelf panel forward, for a drag heading towards the notch.
     func prepareForDrop() {
         apply(.shelf, automatic: true)
+    }
+
+    // MARK: - Modifier override
+
+    /// The tab the currently held modifiers ask for, or nil for "no override".
+    ///
+    /// Read from `NSEvent.modifierFlags` — the live keyboard state — rather than from an
+    /// event, because the open this gates is a hover: there is no click or key press to carry
+    /// flags, only a key the user is holding while the pointer sits on the island.
+    ///
+    /// A route to a tab that is switched off is dropped rather than honoured, so the override
+    /// can never open a panel the user has disabled or a clipboard that is not recording.
+    private func heldModifierRoute() -> ModifierRoute? {
+        let flags = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        // Command wins when both are down. Arbitrary, but it has to be one of them, and the
+        // alternative — treating the combination as its own binding — is a third setting for
+        // a gesture nobody asked for.
+        let route: ModifierRoute
+        if flags.contains(.command) {
+            route = Defaults[.commandHoverRoute]
+        } else if flags.contains(.option) {
+            route = Defaults[.optionHoverRoute]
+        } else {
+            return nil
+        }
+
+        switch route {
+        case .off:
+            return nil
+        case .home:
+            return .home
+        case .shelf:
+            return Defaults[.boringShelf] ? .shelf : nil
+        case .clipboard:
+            return Defaults[.boringShelf] && Defaults[.clipboardHistoryEnabled] ? .clipboard : nil
+        }
     }
 
     // MARK: - Signal evaluation

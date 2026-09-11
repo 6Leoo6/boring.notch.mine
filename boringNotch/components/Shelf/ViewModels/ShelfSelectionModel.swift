@@ -68,6 +68,23 @@ final class ShelfSelectionModel: ObservableObject {
         lastAnchorID = nil
     }
 
+    /// Puts the selection back to `ids`, dropping any that no longer exist. A drag has to
+    /// go through `selectSingle` on mouse-down to know what to carry, but a drag is not a
+    /// selection gesture, so it hands the selection back through here when it ends.
+    func restore(_ ids: Set<UUID>) {
+        let live = Set(ShelfStateViewModel.shared.items.map(\.id))
+        selectedIDs = ids.intersection(live)
+        if let anchor = lastAnchorID, selectedIDs.contains(anchor) { return }
+        lastAnchorID = selectedIDs.first
+    }
+
+    /// Keeps a removed item from lingering in the selection, where it would go on reading
+    /// as "something is selected" with no tile to show for it.
+    func forget(_ id: UUID) {
+        selectedIDs.remove(id)
+        if lastAnchorID == id { lastAnchorID = selectedIDs.first }
+    }
+
     // Keep anchor sane if items array changed drastically (optional helper)
     func ensureValidAnchor(in allItems: [ShelfItem]) {
         if let anchor = lastAnchorID, !allItems.contains(where: { $0.id == anchor }) {

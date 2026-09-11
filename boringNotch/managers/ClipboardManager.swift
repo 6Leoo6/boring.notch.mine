@@ -13,11 +13,31 @@ struct ClipboardEntry: Identifiable {
     let content: ClipboardContent
     let timestamp: Date
     let sourceApp: String?
+    /// A pin is a promise the entry survives forever, so it is exempt from every automatic
+    /// eviction path. Declared `var` with a default so it stays out of the way of the
+    /// memberwise initialiser's existing call sites.
+    var isPinned: Bool = false
 
     enum ClipboardContent {
         case text(String)
         case image(NSImage)
         case fileURLs([URL])
+    }
+
+    /// Rebuilds the entry with only the named fields changed.
+    ///
+    /// Both places that rebuild an entry — a re-copy promoting it, and an edit rewriting its
+    /// text — used to spell out every field. With `isPinned` defaulting to false, forgetting
+    /// it there would silently UNPIN an entry the user asked to keep forever, and nothing
+    /// would report it. Going through here makes that impossible.
+    func replacing(content: ClipboardContent? = nil, timestamp: Date? = nil) -> ClipboardEntry {
+        ClipboardEntry(
+            id: id,
+            content: content ?? self.content,
+            timestamp: timestamp ?? self.timestamp,
+            sourceApp: sourceApp,
+            isPinned: isPinned
+        )
     }
 }
 
@@ -32,6 +52,17 @@ private struct PersistedEntry: Codable, Sendable {
     let sourceApp: String?
     // Added after the original on-disk format; decodes as nil for files written before it existed.
     let imageHash: String?
+    // Same pattern as `imageHash`: optional, so a history file written before pinning
+    // existed still decodes — every entry in it simply comes back unpinned.
+    let isPinned: Bool?
+    /// Security-scoped bookmarks for a file entry's URLs, in the same order.
+    ///
+    /// A plain file URL read off the pasteboard carries a sandbox extension that dies with
+    /// the process, so after a relaunch the app has no right to the file and even
+    /// `NSWorkspace.open` is refused (measured: "could not be launched because a
+    /// miscellaneous error occurred"). A bookmark minted at capture time, while the
+    /// extension is still live, restores that right on every later launch.
+    let fileBookmarks: [Data]?
 
     enum Kind: Codable, Sendable {
         case text(String)
@@ -144,13 +175,43 @@ final class ClipboardManager: ObservableObject {
 
     @Published private(set) var items: [ClipboardEntry] = []
 
+    /// Which collection the clipboard panel is showing.
+    ///
+    /// View state, but it lives here rather than in the panel for two reasons. A `@State` in
+    /// `ClipboardHistoryView` does not survive the island closing (the same teardown that
+    /// reset `rowHeight` in #41), so the page would silently reset while the panel looked
+    /// unchanged. And `ShelfView` sizes the grid from the count of what the panel is SHOWING;
+    /// with the flag here that count is readable from outside, which a private `@State` is
+    /// not. `BoringViewCoordinator` would be the more natural home, but it is outside this
+    /// lane's files.
+    @Published var showsPinnedOnly = false
+
     private var lastChangeCount: Int = 0
     private var pollingTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
     private var saveRevision: Int = 0
     private var imageHashes: [UUID: String] = [:]
+    /// Bookmarks for file entries, index-aligned with the entry's URLs. Written only when a
+    /// bookmark was minted for EVERY url in the entry, so the alignment cannot drift; an
+    /// entry with any non-file url (a copied web link) gets none and needs none.
+    private var fileBookmarks: [UUID: [Data]] = [:]
+    /// File entries captured in THIS launch. Their urls came off the pasteboard, which is
+    /// what granted the sandbox extension that makes them openable — a right that dies with
+    /// the process and cannot be reconstructed on the next launch.
+    private var pasteboardScopedIDs: Set<UUID> = []
 
     private let saveDebounce: Duration = .milliseconds(250)
+
+    /// Pinned entries keep their place in the history rather than moving to a list of their
+    /// own. Pinning is a promise about LIFETIME, not a filing action: the entry is still the
+    /// thing the user copied at that moment, and moving it out would make the main list lie
+    /// about what was copied. It also means `items` stays the superset of everything on
+    /// screen, which is what lets the panel switch pages without any list outside this
+    /// manager needing to know.
+    var pinnedItems: [ClipboardEntry] { items.filter(\.isPinned) }
+
+    /// What the panel is showing right now.
+    var visibleItems: [ClipboardEntry] { showsPinnedOnly ? pinnedItems : items }
 
     private var maxEntries: Int { Defaults[.clipboardMaxEntries] }
     private var maxHistoryAge: TimeInterval { TimeInterval(Defaults[.clipboardHistoryDays]) * secondsPerDay }
@@ -232,7 +293,13 @@ final class ClipboardManager: ObservableObject {
         } else if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
                   !urls.isEmpty
         {
-            addEntry(.init(id: .init(), content: .fileURLs(urls), timestamp: Date(), sourceApp: sourceApp))
+            let entry = ClipboardEntry(id: .init(), content: .fileURLs(urls), timestamp: Date(), sourceApp: sourceApp)
+            // Minted HERE, in the same turn the urls are read, because reading them off the
+            // pasteboard is what grants the sandbox extension a bookmark needs to exist.
+            pasteboardScopedIDs.insert(entry.id)
+            let bookmarks = Self.securityScopedBookmarks(for: urls)
+            if !bookmarks.isEmpty { fileBookmarks[entry.id] = bookmarks }
+            addEntry(entry)
         }
     }
 
@@ -253,7 +320,7 @@ final class ClipboardManager: ObservableObject {
 
     private func addEntry(_ entry: ClipboardEntry, imageSource: Data? = nil) {
         items.insert(entry, at: 0)
-        TabRoutingManager.shared.clipboardDidCapture()
+        didCapture()
         if let imageSource {
             let filename = ClipboardPaths.imageFilename(for: entry.id)
             Task { await ClipboardStore.shared.writeImage(imageSource, filename: filename) }
@@ -261,19 +328,26 @@ final class ClipboardManager: ObservableObject {
         enforceLimits()
     }
 
+    /// One place for everything a new capture implies.
+    ///
+    /// The page reset is here because `clipboardDidCapture()` can route the notch to the
+    /// clipboard panel: landing on the pinned collection, which by definition does not
+    /// contain what was just copied, would read as capture being broken. A capture is the
+    /// one moment the user is being shown something they did not ask to see, so it is also
+    /// the one moment the page may be changed under them.
+    private func didCapture() {
+        showsPinnedOnly = false
+        TabRoutingManager.shared.clipboardDidCapture()
+    }
+
     /// Re-copying an image already in the history moves it back to the front instead of
     /// writing a second identical PNG.
     private func promote(_ entry: ClipboardEntry) {
         guard let index = items.firstIndex(where: { $0.id == entry.id }), index != 0 else { return }
-        let refreshed = ClipboardEntry(
-            id: entry.id,
-            content: entry.content,
-            timestamp: Date(),
-            sourceApp: entry.sourceApp
-        )
+        let refreshed = entry.replacing(timestamp: Date())
         items.remove(at: index)
         items.insert(refreshed, at: 0)
-        TabRoutingManager.shared.clipboardDidCapture()
+        didCapture()
         persist()
     }
 
@@ -303,32 +377,209 @@ final class ClipboardManager: ObservableObject {
         lastChangeCount = pb.changeCount
     }
 
+    /// Replaces a stored text entry's content in place, keeping its id, timestamp, source app
+    /// and position — an edit is a correction, not a new copy, and promoting it would reorder
+    /// tiles under a live cursor.
+    ///
+    /// Also refreshes the previewed entry when ids match: the preview panel holds `entry` as a
+    /// value snapshot, so without this it would keep comparing a saved draft against the old
+    /// text and report itself as still edited.
+    func updateText(_ text: String, for id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }),
+              case .text = items[index].content
+        else { return }
+
+        let updated = items[index].replacing(content: .text(text))
+        items[index] = updated
+
+        if BoringViewCoordinator.shared.clipboardPreviewEntry?.id == id {
+            BoringViewCoordinator.shared.clipboardPreviewEntry = updated
+        }
+        persist()
+    }
+
+    /// Pins or unpins in place: same id, same timestamp, same position in the list.
+    ///
+    /// Deliberately not a promote. Pinning is not a copy, and reordering the strip under the
+    /// cursor that just clicked a corner control is the reason `updateText` holds its
+    /// position too.
+    func togglePin(id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].isPinned.toggle()
+
+        // The preview panel holds its entry as a value snapshot, so without this it would
+        // keep showing the pre-toggle pin state — the same staleness `updateText` fixes.
+        if BoringViewCoordinator.shared.clipboardPreviewEntry?.id == id {
+            BoringViewCoordinator.shared.clipboardPreviewEntry = items[index]
+        }
+
+        // An unpin can drop the entry straight out of a history it only survived because it
+        // was pinned, which is correct: the exemption is gone the moment the promise is.
+        if items[index].isPinned {
+            persist()
+        } else {
+            enforceLimits()
+        }
+    }
+
+    /// Whether this app still holds the right to hand the entry's files to another app.
+    ///
+    /// Answered from what was recorded at capture time, never by touching the filesystem: a
+    /// `isReadableFile` probe per tile would stat on every body evaluation and can block for
+    /// seconds on a disconnected volume. Entries written before bookmarks were captured
+    /// answer false after a relaunch, which is the truth — see `PersistedEntry.fileBookmarks`.
+    ///
+    /// A false answer WITHHOLDS the open control; it does not dim it. #48 replaced the
+    /// preview on file tiles because a path is not worth reading, but an arrow that cannot
+    /// open anything is worse than the preview it replaced — so those tiles keep the
+    /// preview, which still works without any rights to the file. Do not "finish" this by
+    /// showing a disabled arrow instead.
+    func canOpenFiles(_ entry: ClipboardEntry) -> Bool {
+        guard case .fileURLs(let urls) = entry.content, let first = urls.first else { return false }
+        // A copied web link is not a sandboxed resource; opening it needs no rights at all.
+        guard first.isFileURL else { return true }
+        return fileBookmarks[entry.id] != nil || pasteboardScopedIDs.contains(entry.id)
+    }
+
+    /// Hands the entry's files to their default apps.
+    ///
+    /// Bookmarks first, because they are the only route that survives a relaunch. The plain
+    /// urls are the fallback for entries captured before bookmarks were recorded, and work
+    /// only inside the launch that copied them.
+    ///
+    /// Access is held until LaunchServices has finished with the url, which is what vends the
+    /// receiving app its own extension — verified with a sandboxed receiver that read the
+    /// file it was handed.
+    func openFiles(_ entry: ClipboardEntry) {
+        guard case .fileURLs(let urls) = entry.content, !urls.isEmpty else { return }
+
+        var targets: [URL] = []
+        var accessed: [URL] = []
+        if let bookmarks = fileBookmarks[entry.id], bookmarks.count == urls.count {
+            for data in bookmarks {
+                var stale = false
+                guard let url = try? URL(
+                    resolvingBookmarkData: data,
+                    options: [.withSecurityScope],
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &stale
+                ) else { continue }
+                // Only a RESOLVED bookmark is security-scoped. Measured: the same call on a
+                // url read straight off the pasteboard returns false, because a pasteboard
+                // url is not a security-scoped url at all — it carries a plain sandbox
+                // extension instead. So the shelf's `.filter { $0.startAccessing... }`
+                // idiom must never be applied to a clipboard url: it would discard every
+                // one of them. Hence `targets` collects the url either way and only
+                // `accessed` — what actually has to be released — is filtered.
+                if url.startAccessingSecurityScopedResource() { accessed.append(url) }
+                targets.append(url)
+            }
+        }
+        if targets.isEmpty { targets = urls }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        Task {
+            for url in targets {
+                _ = try? await NSWorkspace.shared.open(url, configuration: configuration)
+            }
+            for url in accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+    }
+
+    /// All-or-nothing, so the returned array is always index-aligned with `urls`. A single
+    /// non-file url (a copied web link) or a single failure yields none, and `openFiles`
+    /// falls back to the plain urls.
+    ///
+    /// The asymmetry this rests on is surprising enough to be worth stating: a pasteboard
+    /// url reports itself as NOT security-scoped (`startAccessingSecurityScopedResource()`
+    /// is false), yet `bookmarkData(options: [.withSecurityScope])` on that same url
+    /// succeeds, and the bookmark resolves in a later process with `stale == false`. That is
+    /// the only reason a right which otherwise dies with the process can be made permanent.
+    /// It only works while the extension is live, which is why this is called in the same
+    /// turn the urls are read and not later.
+    private static func securityScopedBookmarks(for urls: [URL]) -> [Data] {
+        guard urls.allSatisfy(\.isFileURL) else { return [] }
+        var bookmarks: [Data] = []
+        for url in urls {
+            guard let data = try? url.bookmarkData(
+                options: [.withSecurityScope],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            ) else { return [] }
+            bookmarks.append(data)
+        }
+        return bookmarks
+    }
+
     func remove(id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items.remove(at: index)
         imageHashes[id] = nil
+        fileBookmarks[id] = nil
+        pasteboardScopedIDs.remove(id)
+        ClipboardDragFileStore.shared.discard(id)
+        ClipboardDraftStore.shared.clear(id)
         if BoringViewCoordinator.shared.clipboardPreviewEntry?.id == id {
             BoringViewCoordinator.shared.clipboardPreviewEntry = nil
         }
         persist()
     }
 
+    /// Clears the history but KEEPS pinned entries.
+    ///
+    /// "Forever persistent" has to mean something, and a single button that silently defeats
+    /// it would make the pin worthless. Unpinning is the way to make a pinned entry
+    /// clearable, which is exactly what the pinned page is for. The button's tooltip says so.
     func clear() {
-        items.removeAll()
-        imageHashes.removeAll()
-        BoringViewCoordinator.shared.clipboardPreviewEntry = nil
+        let kept = pinnedItems
+        let keptIDs = Set(kept.map(\.id))
+        for entry in items where !keptIDs.contains(entry.id) {
+            ClipboardDragFileStore.shared.discard(entry.id)
+            ClipboardDraftStore.shared.clear(entry.id)
+        }
+        items = kept
+        imageHashes = imageHashes.filter { keptIDs.contains($0.key) }
+        fileBookmarks = fileBookmarks.filter { keptIDs.contains($0.key) }
+        pasteboardScopedIDs = pasteboardScopedIDs.intersection(keptIDs)
+        if let previewed = BoringViewCoordinator.shared.clipboardPreviewEntry,
+           !keptIDs.contains(previewed.id)
+        {
+            BoringViewCoordinator.shared.clipboardPreviewEntry = nil
+        }
         persist()
     }
 
+    /// The one eviction path. Pinned entries are exempt from BOTH limits, and — just as
+    /// important — they do not spend the count budget: the cap is applied to unpinned entries
+    /// only. Charging pins against `clipboardMaxEntries` would mean pinning 50 things quietly
+    /// deletes all recent history, which is the opposite of what a pin is for.
+    ///
+    /// Reduces to the previous behaviour exactly when nothing is pinned: `items` is
+    /// newest-first, so taking the first `maxEntries` survivors is the old `prefix`.
     func enforceLimits() {
         let cutoff = Date().addingTimeInterval(-maxHistoryAge)
-        var kept = items.filter { $0.timestamp > cutoff }
-        if kept.count > maxEntries {
-            kept = Array(kept.prefix(maxEntries))
+        var unpinnedKept = 0
+        var kept: [ClipboardEntry] = []
+        for entry in items {
+            if entry.isPinned {
+                kept.append(entry)
+                continue
+            }
+            guard entry.timestamp > cutoff, unpinnedKept < maxEntries else { continue }
+            unpinnedKept += 1
+            kept.append(entry)
         }
         if kept.count != items.count {
             let survivors = Set(kept.map(\.id))
             imageHashes = imageHashes.filter { survivors.contains($0.key) }
+            fileBookmarks = fileBookmarks.filter { survivors.contains($0.key) }
+            pasteboardScopedIDs = pasteboardScopedIDs.intersection(survivors)
+            for dropped in items where !survivors.contains(dropped.id) {
+                ClipboardDragFileStore.shared.discard(dropped.id)
+                ClipboardDraftStore.shared.clear(dropped.id)
+            }
             if let previewed = BoringViewCoordinator.shared.clipboardPreviewEntry,
                !survivors.contains(previewed.id)
             {
@@ -357,11 +608,17 @@ final class ClipboardManager: ObservableObject {
         }
 
         let cutoff = Date().addingTimeInterval(-maxHistoryAge)
-        for entry in persisted where entry.timestamp > cutoff {
+        // The age cutoff is applied here as well as in `enforceLimits`, so the exemption has
+        // to be repeated: without it a pinned entry older than `clipboardHistoryDays` would
+        // be dropped on load and the pin would only look permanent until the next launch.
+        for entry in persisted where entry.timestamp > cutoff || entry.isPinned == true {
             guard let restored = restoreEntry(entry) else { continue }
             items.append(restored)
             if let hash = entry.imageHash {
                 imageHashes[restored.id] = hash
+            }
+            if let bookmarks = entry.fileBookmarks, !bookmarks.isEmpty {
+                fileBookmarks[restored.id] = bookmarks
             }
         }
 
@@ -389,7 +646,8 @@ final class ClipboardManager: ObservableObject {
             id: persisted.id,
             content: content,
             timestamp: persisted.timestamp,
-            sourceApp: persisted.sourceApp
+            sourceApp: persisted.sourceApp,
+            isPinned: persisted.isPinned ?? false
         )
     }
 
@@ -446,7 +704,9 @@ final class ClipboardManager: ObservableObject {
             kind: kind,
             timestamp: entry.timestamp,
             sourceApp: entry.sourceApp,
-            imageHash: imageHashes[entry.id]
+            imageHash: imageHashes[entry.id],
+            isPinned: entry.isPinned,
+            fileBookmarks: fileBookmarks[entry.id]
         )
     }
 

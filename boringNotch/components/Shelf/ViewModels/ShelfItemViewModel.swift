@@ -18,6 +18,14 @@ final class ShelfItemViewModel: ObservableObject {
     @Published var thumbnail: NSImage?
     @Published var isDropTargeted: Bool = false
     @Published var isRenaming: Bool = false
+    /// Bumped when the context menu asks for a removal. The menu is AppKit and cannot present
+    /// a SwiftUI alert, so the request has to cross to the view, which owns the confirmation
+    /// for every removal path. A counter rather than the items themselves, so asking twice for
+    /// the same selection still registers as two requests.
+    @Published private(set) var removalRequestID: Int = 0
+    /// Captured with the request, so the dialog and the removal cannot disagree if the
+    /// selection changes while the alert is up.
+    private(set) var removalRequestItems: [ShelfItem] = []
     @Published var draftTitle: String = ""
     private var sharingLifecycle: SharingLifecycleDelegate?
     private var quickShareLifecycle: SharingLifecycleDelegate?
@@ -29,7 +37,15 @@ final class ShelfItemViewModel: ObservableObject {
     init(item: ShelfItem) {
         self.item = item
         self.draftTitle = item.displayName
-        Task { await loadThumbnail() }
+        // Seed synchronously so a view model rebuilt by a tab switch renders its cached
+        // thumbnail on the first frame instead of flashing the generic file icon.
+        if let url = item.fileURL {
+            let side = ShelfItemMetrics.thumbnailSide
+            self.thumbnail = ThumbnailService.cached(for: url, size: CGSize(width: side, height: side))
+        }
+        if thumbnail == nil {
+            Task { await loadThumbnail() }
+        }
     }
 
     var isSelected: Bool { selection.isSelected(item.id) }
@@ -119,7 +135,48 @@ final class ShelfItemViewModel: ObservableObject {
 
     func handleDoubleClick() {
     let selected = ShelfSelectionModel.shared.selectedItems(in: ShelfStateViewModel.shared.items)
+        ShelfStateViewModel.shared.markLaunching(selected.map(\.id))
         for it in selected { ShelfActionService.open(it) }
+    }
+
+    /// The corner arrow opens ONLY its own tile, whatever else is selected — it is a control
+    /// that lives on one tile, so acting on the selection would be surprising.
+    func openSelf() {
+        ShelfStateViewModel.shared.markLaunching([item.id])
+        ShelfActionService.open(item)
+    }
+
+    /// Puts this one tile on the pasteboard WITHOUT it coming back as a new clipboard-history
+    /// entry. Copying off the shelf is a hand-off, not something the user typed or cut, and
+    /// recording it would push a duplicate of an item they can already see to the top of the
+    /// history. `ClipboardManager` owns the suppression — it has to move its own change
+    /// counter past the write, which nothing outside it can do.
+    func copySelfWithoutRecording() {
+        switch item.kind {
+        case .text(let string):
+            ClipboardManager.shared.copyWithoutRecording([string as NSString])
+        case .link(let url):
+            ClipboardManager.shared.copyWithoutRecording([url as NSURL])
+        case .file:
+            guard let url = ShelfStateViewModel.shared.resolveAndUpdateBookmark(for: item) else { return }
+            // The receiving app reads the URL long after this returns, so access has to
+            // outlive the copy. Same static hand-off the context menu's Copy uses, released
+            // here first so a second copy cannot leak the previous one.
+            for previous in ShelfItemViewModel.copiedURLs {
+                previous.stopAccessingSecurityScopedResource()
+            }
+            ShelfItemViewModel.copiedURLs = [url].filter { $0.startAccessingSecurityScopedResource() }
+            ClipboardManager.shared.copyWithoutRecording([url as NSURL])
+        }
+    }
+
+    /// The context menu acts on the whole SELECTION, unlike the corner trash which acts only
+    /// on its own tile — so the confirmation has to be told how many items are going.
+    func requestRemoveSelection() {
+        let selected = ShelfSelectionModel.shared.selectedItems(in: ShelfStateViewModel.shared.items)
+        guard !selected.isEmpty else { return }
+        removalRequestItems = selected
+        removalRequestID += 1
     }
 
     func shareItem(from view: NSView?) {
@@ -542,8 +599,7 @@ final class ShelfItemViewModel: ObservableObject {
                 }
 
             case "Remove":
-                let selected = ShelfSelectionModel.shared.selectedItems(in: ShelfStateViewModel.shared.items)
-                for it in selected { ShelfActionService.remove(it) }
+                viewModel.requestRemoveSelection()
                 
             case "Remove Background":
                 handleRemoveBackground()

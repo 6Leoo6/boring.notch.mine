@@ -33,9 +33,23 @@ struct BatteryView: View {
     private static let chargingSymbolName = "battery.100percent.bolt"
     /// Width of the fill bar at 100%, as a fraction of the ink width.
     private static let trackWidthFraction: CGFloat = 0.73971
-    /// Plug height relative to the outline, measured from the user's reference: 1.065.
-    private static let plugHeightFraction: CGFloat = 1.065
-    private static let plugKnockoutScale: CGFloat = 1.35
+    /// Plug height relative to the outline.
+    ///
+    /// Was 1.065, measured off the reference, and at that size the plug's top border read as
+    /// DUPLICATED (#59). The prongs cleared the outline by `(1.065 - 1)/2 · height` = 0.393pt
+    /// against an outline stroke measured at 1.188pt — a third of a stroke, 0.8 of a device
+    /// pixel at 2x. Two near-parallel lines that close together do not read as a tip standing
+    /// proud of a border; they read as one thick border drawn twice.
+    ///
+    /// Derived instead of eyeballed: clear the border by a FULL stroke, so the two can never
+    /// merge at any size or scale factor. `1 + 2 · strokeFraction`, with the stroke measured
+    /// at 0.09836 · height (1.188pt on a 12.079pt glyph, read off a 16x render).
+    private static let outlineStrokeFraction: CGFloat = 0.09836
+    private static let plugHeightFraction: CGFloat = 1 + 2 * BatteryView.outlineStrokeFraction
+    /// How far the knockout copy is dilated past the glyph. Scaling about the ink's own centre
+    /// gives each flank `(scale - 1)` times the ink's half-width (0.15197 · `batteryWidth`),
+    /// so this is the 0.0348 · `batteryWidth` gap the reference shows, measured off drawn pixels.
+    private static let plugKnockoutScale: CGFloat = 1.2289
     /// Centre of the outline's body, excluding the terminal nub — where Apple puts the bolt.
     private static let bodyCentreFraction: CGFloat = 0.45221
 
@@ -134,10 +148,16 @@ struct BatteryView: View {
     /// Apple's charging composite carries its own gap in the outline where the bolt crosses.
     /// The plug has no such composite, so a dilated copy is punched through fill and outline
     /// together — cutting the outline, not just the fill, is what the reference shows.
+    ///
+    /// The dilation is anchored on `bodyCentreFraction` because that is where `plugGlyph` puts
+    /// its ink. `scaleEffect`'s default anchor is the *layout frame's* centre, which the glyph's
+    /// own `.offset(x:)` has moved the ink away from, so the dilated copy lands off to one side:
+    /// measured 0.0335 · `batteryWidth` more gap on the left than on the right, at every size.
     @ViewBuilder private var plugKnockout: some View {
         if showPowerIcon && !isCharging {
             plugGlyph
-                .scaleEffect(Self.plugKnockoutScale)
+                .scaleEffect(Self.plugKnockoutScale,
+                             anchor: UnitPoint(x: Self.bodyCentreFraction, y: 0.5))
                 .blendMode(.destinationOut)
         }
     }

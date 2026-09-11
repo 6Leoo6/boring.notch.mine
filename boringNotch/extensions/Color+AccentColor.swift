@@ -27,6 +27,21 @@ extension Color {
         }
         return Color.effectiveAccent.opacity(0.25)
     }
+
+    /// Highlight colour for notch chrome — selection, drop targets, drag previews.
+    ///
+    /// Follows the player tint when tinting is enabled, so highlights match the rest of the
+    /// notch instead of cutting across it with the system accent. Artwork with no usable hue
+    /// (near-white, near-black, greyscale, or no artwork at all) falls back to the accent,
+    /// so an idle player looks exactly as it does today.
+    ///
+    /// Reads `avgColor` directly rather than observing it: these highlights are transient —
+    /// they appear on hover, drag or selection — so each appearance picks up the current
+    /// artwork. A highlight already on screen will not repaint mid-track.
+    static var notchHighlight: Color {
+        guard Defaults[.playerColorTinting] else { return .effectiveAccent }
+        return .playerTint(from: MusicManager.shared.avgColor, fallback: .effectiveAccent)
+    }
 }
 
 extension NSColor {

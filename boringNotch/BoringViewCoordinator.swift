@@ -50,16 +50,59 @@ struct ExpandedItem {
 class BoringViewCoordinator: ObservableObject {
     static let shared = BoringViewCoordinator()
 
-    @Published var currentView: NotchViews = .home
+    @Published var currentView: NotchViews = .home {
+        didSet {
+            // Hand the grid's extra island height back the moment the tab changes, not when
+            // `ShelfView` disappears — that fires ~840ms later, and the outgoing view stops
+            // receiving its observed object, so there is no earlier hook inside the shelf.
+            // Measured: without this the island gives back 204pt in a SINGLE frame, 845ms
+            // after the switch. `shelfGridExpansion.didSet` posts the resize for us.
+            guard currentView != oldValue, currentView != .shelf, shelfGridExpansion != 0 else { return }
+            shelfGridExpansion = 0
+        }
+    }
     @Published var helloAnimationRunning: Bool = false
     @Published var clipboardPreviewEntry: ClipboardEntry? = nil {
         didSet {
-            NotificationCenter.default.post(
-                name: .clipboardPreviewExpandChanged,
-                object: nil,
-                userInfo: ["expand": clipboardPreviewEntry != nil]
-            )
+            postIslandExpansion()
         }
+    }
+
+    /// Extra height the shelf panel needs to show its grid. Set by the shelf, zero otherwise.
+    @Published var shelfGridExpansion: CGFloat = 0 {
+        didSet { postIslandExpansion() }
+    }
+
+    /// The single source of extra island height. The preview and the grid are mutually
+    /// exclusive — the preview wins, since it is the more transient of the two.
+    var islandExpansion: CGFloat {
+        clipboardPreviewEntry != nil ? clipboardPreviewHeight : shelfGridExpansion
+    }
+
+    /// The slice of `islandExpansion` that must stay EMPTY island surface below the tabs.
+    /// The preview draws into that band; the grid instead wants the tab content itself to
+    /// grow, so it contributes nothing here.
+    var clipboardPreviewBand: CGFloat {
+        clipboardPreviewEntry != nil ? clipboardPreviewHeight : 0
+    }
+
+    private func postIslandExpansion() {
+        NotificationCenter.default.post(
+            name: .clipboardPreviewExpandChanged,
+            object: nil,
+            userInfo: ["extraHeight": islandExpansion]
+        )
+    }
+
+    /// Sizes the window a turn before the island animates into it. Measured: growing the
+    /// window in the same turn as the animation drops the island ~84pt and slides it back up.
+    /// Shrinking needs no equivalent — the window shrink is already delayed.
+    func prepareIslandExpansion(_ extraHeight: CGFloat) {
+        NotificationCenter.default.post(
+            name: .clipboardPreviewExpandChanged,
+            object: nil,
+            userInfo: ["extraHeight": extraHeight]
+        )
     }
     private var sneakPeekDispatch: DispatchWorkItem?
     private var expandingViewDispatch: DispatchWorkItem?

@@ -18,46 +18,50 @@ enum PanDirection {
     func signed(deltaX: CGFloat, deltaY: CGFloat) -> CGFloat { (isHorizontal ? deltaX : deltaY) * sign }
 }
 
-/// Regions that own horizontal scrolling outright, so a horizontal pan over them is never
-/// reinterpreted as a tab switch. Geometry alone is not enough: a list scrolled to its end,
-/// or one whose items happen to fit, reports no room to scroll while the user is plainly
-/// still scrolling it.
+/// Regions that own scrolling along an axis outright, so a pan over them is never
+/// reinterpreted as a tab switch or an open/close gesture. Geometry alone is not enough: a
+/// list scrolled to its end, or one whose items happen to fit, reports no room to scroll
+/// while the user is plainly still scrolling it.
 @MainActor
-final class HorizontalScrollOwners {
-    static let shared = HorizontalScrollOwners()
-    private var regions: Set<UUID> = []
+final class ScrollOwners {
+    static let shared = ScrollOwners()
+    private var regions: [UUID: Axis] = [:]
 
-    var isActive: Bool { !regions.isEmpty }
+    func owns(_ axis: Axis) -> Bool { regions.values.contains(axis) }
 
-    func setInside(_ inside: Bool, id: UUID) {
+    func setInside(_ inside: Bool, id: UUID, axis: Axis) {
         if inside {
-            regions.insert(id)
+            regions[id] = axis
         } else {
-            regions.remove(id)
+            regions[id] = nil
         }
     }
 
     func forget(_ id: UUID) {
-        regions.remove(id)
+        regions[id] = nil
     }
 }
 
-private struct HorizontalScrollOwnerModifier: ViewModifier {
+private struct ScrollOwnerModifier: ViewModifier {
+    let axis: Axis
     @State private var id = UUID()
 
     func body(content: Content) -> some View {
         content
-            .onHover { HorizontalScrollOwners.shared.setInside($0, id: id) }
-            .onDisappear { HorizontalScrollOwners.shared.forget(id) }
+            .onHover { ScrollOwners.shared.setInside($0, id: id, axis: axis) }
+            .onDisappear { ScrollOwners.shared.forget(id) }
+            // The panel can switch axis under a stationary cursor when it expands into a grid
+            .onChange(of: axis) { _, newAxis in
+                ScrollOwners.shared.setInside(true, id: id, axis: newAxis)
+            }
     }
 }
 
 extension View {
-    /// Marks a horizontally scrolling region that owns its gestures outright: while the
-    /// pointer is inside it, horizontal pan gestures are suppressed. Vertical gestures
-    /// (open/close) are unaffected.
-    func ownsHorizontalScrolling() -> some View {
-        modifier(HorizontalScrollOwnerModifier())
+    /// Marks a scrolling region that owns its gestures outright: while the pointer is inside
+    /// it, pan gestures along `axis` are suppressed. The other axis is unaffected.
+    func ownsScrolling(axis: Axis) -> some View {
+        modifier(ScrollOwnerModifier(axis: axis))
     }
 
     func panGesture(direction: PanDirection, threshold: CGFloat = 4, action: @escaping (CGFloat, NSEvent.Phase) -> Void) -> some View {
@@ -65,7 +69,7 @@ extension View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        guard !(direction.isHorizontal && HorizontalScrollOwners.shared.isActive) else { return }
+                        guard !ScrollOwners.shared.owns(direction.isHorizontal ? .horizontal : .vertical) else { return }
                         let s = direction.signed(from: value.translation)
                         guard s > 0, s.magnitude >= threshold else { return }
                         action(s.magnitude, .changed)
@@ -174,9 +178,8 @@ private struct ScrollMonitor: NSViewRepresentable {
             // until the gesture ends, so drifting off the strip mid-scroll cannot hand the
             // rest of the swipe back to the tab switcher.
             if !active {
-                claimedByNestedScroll = direction.isHorizontal
-                    && (HorizontalScrollOwners.shared.isActive
-                        || Self.isOverHorizontalScrollView(event, in: view))
+                claimedByNestedScroll = ScrollOwners.shared.owns(direction.isHorizontal ? .horizontal : .vertical)
+                    || (direction.isHorizontal && Self.isOverHorizontalScrollView(event, in: view))
             }
             guard !claimedByNestedScroll else { return }
 

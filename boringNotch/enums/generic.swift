@@ -34,6 +34,36 @@ public enum ShelfPanel: String, Defaults.Serializable {
     case clipboard
 }
 
+/// Where a modifier held while the pointer opens the notch sends it.
+///
+/// `off` rather than `none` deliberately: an enum case named `none` collides with
+/// `Optional.none` at every comparison site and makes the routing read ambiguously.
+public enum ModifierRoute: String, CaseIterable, Defaults.Serializable {
+    case off
+    case home
+    case shelf
+    case clipboard
+
+    var label: String {
+        switch self {
+        case .off: return "Nothing"
+        case .home: return "Home"
+        case .shelf: return "Shelf"
+        case .clipboard: return "Clipboard history"
+        }
+    }
+}
+
+/// What started an open. Only a POINTER-initiated open reads the modifier keys: the notch has
+/// a keyboard shortcut of its own (⌘⇧I by default) and so does the clipboard panel (⇧⌘C), so
+/// reading the flags on a shortcut open would route every one of them to whatever Command is
+/// bound to. A drag counts as `system` for the same kind of reason — ⌥ is the Finder's copy
+/// modifier and is routinely held over a drop.
+public enum NotchOpenTrigger {
+    case pointer
+    case system
+}
+
 enum SettingsEnum {
     case general
     case about

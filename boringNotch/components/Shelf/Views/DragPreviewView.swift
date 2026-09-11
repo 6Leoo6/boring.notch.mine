@@ -21,7 +21,7 @@ struct DragPreviewView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 2)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor))
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color.notchHighlight))
                 .frame(alignment: .top)
         }
         .frame(width: 105)

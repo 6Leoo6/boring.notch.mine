@@ -54,6 +54,9 @@ struct SettingsView: View {
                 NavigationLink(value: "Clipboard") {
                     Label("Clipboard", systemImage: "clipboard")
                 }
+                NavigationLink(value: "ScreenCapture") {
+                    Label("Screen capture", systemImage: "camera.viewfinder")
+                }
                 NavigationLink(value: "Shortcuts") {
                     Label("Shortcuts", systemImage: "keyboard")
                 }
@@ -90,6 +93,8 @@ struct SettingsView: View {
                     Shelf()
                 case "Clipboard":
                     ClipboardSettings()
+                case "ScreenCapture":
+                    ScreenCaptureSettings()
                 case "Shortcuts":
                     Shortcuts()
                 case "Extensions":
@@ -152,7 +157,10 @@ struct GeneralSettings: View {
     @Default(.automaticallySwitchDisplay) var automaticallySwitchDisplay
     @Default(.enableGestures) var enableGestures
     @Default(.openNotchOnHover) var openNotchOnHover
-    
+    @Default(.keepAwakeDuration) var keepAwakeDuration
+    @Default(.keepAwakePreventsDisplaySleep) var keepAwakePreventsDisplaySleep
+    @Default(.keepAwakeRestoreOnLaunch) var keepAwakeRestoreOnLaunch
+
 
     var body: some View {
         Form {
@@ -266,6 +274,8 @@ struct GeneralSettings: View {
 
             NotchBehaviour()
 
+            keepAwakeControls()
+
             gestureControls()
         }
         .toolbar {
@@ -280,6 +290,35 @@ struct GeneralSettings: View {
             if !openNotchOnHover {
                 enableGestures = true
             }
+        }
+    }
+
+    @ViewBuilder
+    func keepAwakeControls() -> some View {
+        Section {
+            Defaults.Toggle(key: .showKeepAwake) {
+                Text("Show keep awake button in notch")
+            }
+            Picker("Stay awake for", selection: $keepAwakeDuration) {
+                ForEach(KeepAwakeDuration.allCases) { duration in
+                    Text(duration.label).tag(duration)
+                }
+            }
+            Toggle("Also keep the display awake", isOn: $keepAwakePreventsDisplaySleep)
+                .onChange(of: keepAwakePreventsDisplaySleep) {
+                    Task { @MainActor in
+                        SleepManager.shared.reapplyDisplaySleepPreference()
+                    }
+                }
+            Toggle("Restore keep awake on launch", isOn: $keepAwakeRestoreOnLaunch)
+            Text(
+                "Keep awake holds a power assertion, so it is released the moment boring.notch quits. It cannot keep the Mac awake with the lid closed."
+            )
+            .multilineTextAlignment(.trailing)
+            .foregroundStyle(.secondary)
+            .font(.caption)
+        } header: {
+            Text("Keep awake")
         }
     }
 
@@ -904,6 +943,8 @@ struct Shelf: View {
     @Default(.shelfTapToOpen) var shelfTapToOpen: Bool
     @Default(.quickShareProvider) var quickShareProvider
     @Default(.expandedDragDetection) var expandedDragDetection: Bool
+    @Default(.commandHoverRoute) var commandHoverRoute: ModifierRoute
+    @Default(.optionHoverRoute) var optionHoverRoute: ModifierRoute
     @StateObject private var quickShareService = QuickShareService.shared
 
     private var selectedProvider: QuickShareProvider? {
@@ -943,6 +984,25 @@ struct Shelf: View {
                 HStack {
                     Text("General")
                 }
+            }
+
+            Section {
+                Picker("Hold \u{2318} Command", selection: $commandHoverRoute) {
+                    ForEach(ModifierRoute.allCases, id: \.self) { route in
+                        Text(route.label).tag(route)
+                    }
+                }
+                Picker("Hold \u{2325} Option", selection: $optionHoverRoute) {
+                    ForEach(ModifierRoute.allCases, id: \.self) { route in
+                        Text(route.label).tag(route)
+                    }
+                }
+            } header: {
+                Text("Open straight to a tab")
+            } footer: {
+                Text("Hold the key while the pointer opens the notch — hovering, clicking or swiping it down — to go straight to that tab, whatever the notch would otherwise have shown. Keyboard shortcuts and drags are unaffected, and a tab that is switched off is skipped.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             
             Section {
@@ -1072,6 +1132,136 @@ struct ClipboardSettings: View {
         }
         .accentColor(.effectiveAccent)
         .navigationTitle("Clipboard")
+    }
+}
+
+struct ScreenCaptureSettings: View {
+    @ObservedObject private var manager = ScreenCaptureManager.shared
+    @Default(.screenCaptureEnabled) var enabled: Bool
+    @Default(.screenCaptureToClipboard) var toClipboard: Bool
+    @Default(.screenCaptureSaveLocation) var saveLocation: String
+
+    var body: some View {
+        Form {
+            Section {
+                Defaults.Toggle(key: .screenCaptureEnabled) {
+                    Text("Enable screen capture")
+                }
+                Defaults.Toggle(key: .showCaptureControls) {
+                    Text("Show capture buttons in the notch")
+                }
+                .disabled(!enabled)
+            } header: {
+                Text("General")
+            } footer: {
+                Text("Screenshots and recordings both start by dragging out an area.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section {
+                Defaults.Toggle(key: .screenCaptureToClipboard) {
+                    Text("Copy captures instead of saving them")
+                }
+
+                HStack {
+                    Text("Save to")
+                    Spacer()
+                    Text(saveLocation)
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Button("Choose…") {
+                        ScreenCaptureManager.shared.chooseSaveLocation()
+                    }
+                }
+                .disabled(toClipboard)
+
+                if toClipboard {
+                    Button("Show copied recordings") {
+                        ScreenCaptureManager.shared.revealCopiedRecordings()
+                    }
+                }
+            } header: {
+                Text("Destination")
+            } footer: {
+                Text(toClipboard
+                     ? "Screenshots go straight to the clipboard. A recording has to be a file, so it is kept inside boring.notch and the clipboard gets the file itself — paste it anywhere that takes an attachment. Copied recordings are cleaned up after 7 days."
+                     : "Captures are saved as files. Pick the folder with Choose… — boring.notch is sandboxed, so a folder it has not been handed cannot be written to.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .disabled(!enabled)
+
+            Section {
+                Defaults.Toggle(key: .screenCaptureIncludeCursor) {
+                    Text("Include the pointer")
+                }
+                Defaults.Toggle(key: .screenCapturePlaySound) {
+                    Text("Play capture sound")
+                }
+            } header: {
+                Text("Capture")
+            } footer: {
+                Text("The pointer is only included in full-screen shots and recordings; macOS does not allow it while you are dragging out a selection.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .disabled(!enabled)
+
+            Section {
+                if !manager.canCapture {
+                    Label("This version of macOS has no screencapture tool.", systemImage: "exclamationmark.triangle")
+                        .foregroundColor(.secondary)
+                } else if manager.permissionGranted {
+                    Label("Screen Recording permission granted", systemImage: "checkmark.circle")
+                        .foregroundColor(.secondary)
+                } else {
+                    Label("Screen Recording permission is needed", systemImage: "exclamationmark.triangle")
+                        .foregroundColor(.secondary)
+                    Button("Open Privacy Settings") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+
+                if let message = manager.lastError {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                if let last = manager.lastCaptureURL {
+                    HStack {
+                        Text(manager.lastCaptureWasCopied ? "Last capture (copied)" : "Last capture")
+                        Spacer()
+                        Button("Show in Finder") {
+                            ScreenCaptureManager.shared.revealLastCapture()
+                        }
+                        .help(last.path)
+                    }
+                }
+            } header: {
+                Text("Permission")
+            }
+
+            Section {
+                Button("Open the macOS Screenshot toolbar") {
+                    ScreenCaptureManager.shared.openSystemCaptureUI()
+                }
+            } footer: {
+                Text("The same toolbar as ⇧⌘5, with the system's own options.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .accentColor(.effectiveAccent)
+        .navigationTitle("Screen capture")
+        .onAppear {
+            ScreenCaptureManager.shared.refreshPermissionState()
+        }
     }
 }
 
@@ -1453,6 +1643,9 @@ struct Appearance: View {
                 }
                 Defaults.Toggle(key: .showNotHumanFace) {
                     Text("Show cool face animation while inactive")
+                }
+                Defaults.Toggle(key: .flashlightRaisesBrightness) {
+                    Text("Flashlight raises display brightness while active")
                 }
             } header: {
                 HStack {

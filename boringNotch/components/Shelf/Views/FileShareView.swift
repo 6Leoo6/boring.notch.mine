@@ -49,7 +49,7 @@ struct FileShareView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(
                             vm.dropZoneTargeting
-                                ? Color.accentColor.opacity(0.9)
+                                ? Color.notchHighlight.opacity(0.9)
                                 : Color.white.opacity(0.1),
                             style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [10])
                         )
@@ -76,7 +76,7 @@ struct FileShareView: View {
                     }
                     .frame(width: 34, height: 34)
                         .foregroundStyle(
-                            vm.dropZoneTargeting ? Color.accentColor : Color.gray
+                            vm.dropZoneTargeting ? Color.notchHighlight : Color.gray
                         )
                         .scaleEffect(
                             vm.dropZoneTargeting ? 1.06 : 1.0

@@ -48,6 +48,12 @@ class WebcamManager: NSObject, ObservableObject {
     
     private override init() {
         super.init()
+        // Resolve the real status up front. `checkAndRequestVideoAuthorization()` is the only
+        // thing that refreshes this cache, and every one of its callers sits inside a
+        // `case .notDetermined:` — so the cache is self-gating, and without this line the
+        // first click of every launch is spent resolving it instead of opening the mirror.
+        // This overload only reads; it never prompts.
+        authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
         NotificationCenter.default.addObserver(self, selector: #selector(deviceWasDisconnected), name: .AVCaptureDeviceWasDisconnected, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(deviceWasConnected), name: .AVCaptureDeviceWasConnected, object: nil)
         checkCameraAvailability()

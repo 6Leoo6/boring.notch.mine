@@ -17,6 +17,22 @@ final class ShelfStateViewModel: ObservableObject {
 
     @Published var isLoading: Bool = false
 
+    /// Items currently being opened. Shared rather than per-tile because a double-click
+    /// opens EVERY selected item, so the launch cue has to appear on all of them.
+    @Published private(set) var launchingIDs: Set<UUID> = []
+
+    /// Holds the cue long enough to span the gap before the app comes up, rather than
+    /// flashing and vanishing. There is no reliable signal for "the app is frontmost now",
+    /// so this is a deliberate fixed window.
+    func markLaunching(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        launchingIDs.formUnion(ids)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(1400))
+            self?.launchingIDs.subtract(ids)
+        }
+    }
+
     var isEmpty: Bool { items.isEmpty }
 
     // Queue for deferred bookmark updates to avoid publishing during view updates
@@ -47,6 +63,7 @@ final class ShelfStateViewModel: ObservableObject {
     func remove(_ item: ShelfItem) {
         item.cleanupStoredData()
         items.removeAll { $0.id == item.id }
+        ShelfSelectionModel.shared.forget(item.id)
     }
 
     func updateBookmark(for item: ShelfItem, bookmark: Data) {
