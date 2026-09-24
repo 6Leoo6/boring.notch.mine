@@ -434,6 +434,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
         }
 
+        KeyboardShortcuts.onKeyDown(for: .mirrorShot) {
+            Task { @MainActor in
+                MirrorShotManager.shared.takeShot()
+            }
+        }
+        // AFTER the handler, never before, and this order is the whole bug it fixes:
+        // `onKeyDown(for:)` calls `registerShortcutIfNeeded` internally, so it BINDS the
+        // hotkey as a side effect of adding a listener. Releasing first and registering second
+        // left a bare Space bound globally from launch — every space in every app taken by the
+        // mirror instead of typed. It is bound again only while the mirror is in use; see
+        // `MirrorShotManager.armSpace`.
+        KeyboardShortcuts.disable(.mirrorShot)
+
         KeyboardShortcuts.onKeyDown(for: .toggleSneakPeek) { [weak self] in
             guard let self = self else { return }
             if Defaults[.sneakPeekStyles] == .inline {
@@ -502,6 +515,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         ClipboardManager.shared.start()
         ClipboardManager.shared.enforceLimits()
+        AgentBridgeServer.shared.startIfEnabled()
+        // Drag staging from previous launches is unreachable: the store keys it in memory, so
+        // nothing that survived a quit was ever going to be cleaned up.
+        ClipboardDragFileStore.shared.sweepOrphanedStaging(
+            keeping: Set(ClipboardManager.shared.items.map(\.id))
+        )
 
         Task { @MainActor in
             SleepManager.shared.restoreOnLaunch()

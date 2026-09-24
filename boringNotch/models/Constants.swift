@@ -97,9 +97,9 @@ enum KeepAwakeDuration: Int, CaseIterable, Identifiable, Defaults.Serializable {
 
 extension Defaults.Keys {
     // MARK: General
-    static let menubarIcon = Key<Bool>("menubarIcon", default: true)
+    static let menubarIcon = Key<Bool>("menubarIcon", default: false)
     static let showOnAllDisplays = Key<Bool>("showOnAllDisplays", default: false)
-    static let automaticallySwitchDisplay = Key<Bool>("automaticallySwitchDisplay", default: true)
+    static let automaticallySwitchDisplay = Key<Bool>("automaticallySwitchDisplay", default: false)
     static let releaseName = Key<String>("releaseName", default: "Flying Rabbit 🐇🪽")
     
     // MARK: Behavior
@@ -124,7 +124,7 @@ extension Defaults.Keys {
     // MARK: Appearance
     static let showEmojis = Key<Bool>("showEmojis", default: false)
     //static let alwaysShowTabs = Key<Bool>("alwaysShowTabs", default: true)
-    static let showMirror = Key<Bool>("showMirror", default: false)
+    static let showMirror = Key<Bool>("showMirror", default: true)
     static let mirrorShape = Key<MirrorShapeEnum>("mirrorShape", default: MirrorShapeEnum.rectangle)
     static let settingsIconInNotch = Key<Bool>("settingsIconInNotch", default: true)
     static let lightingEffect = Key<Bool>("lightingEffect", default: true)
@@ -133,11 +133,11 @@ extension Defaults.Keys {
 
     static let showNotHumanFace = Key<Bool>("showNotHumanFace", default: false)
     static let tileShowLabels = Key<Bool>("tileShowLabels", default: false)
-    static let showCalendar = Key<Bool>("showCalendar", default: false)
+    static let showCalendar = Key<Bool>("showCalendar", default: true)
     static let hideCompletedReminders = Key<Bool>("hideCompletedReminders", default: true)
     static let sliderColor = Key<SliderColorEnum>(
         "sliderUseAlbumArtColor",
-        default: SliderColorEnum.white
+        default: SliderColorEnum.albumArt
     )
     static let playerColorTinting = Key<Bool>("playerColorTinting", default: true)
     static let useMusicVisualizer = Key<Bool>("useMusicVisualizer", default: true)
@@ -151,7 +151,7 @@ extension Defaults.Keys {
     
     // MARK: Media playback
     static let coloredSpectrogram = Key<Bool>("coloredSpectrogram", default: true)
-    static let enableSneakPeek = Key<Bool>("enableSneakPeek", default: false)
+    static let enableSneakPeek = Key<Bool>("enableSneakPeek", default: true)
     static let sneakPeekStyles = Key<SneakPeekStyle>("sneakPeekStyles", default: .standard)
     static let waitInterval = Key<Double>("waitInterval", default: 3)
     static let showShuffleAndRepeat = Key<Bool>("showShuffleAndRepeat", default: false)
@@ -208,7 +208,7 @@ extension Defaults.Keys {
     
     // MARK: Shelf
     static let boringShelf = Key<Bool>("boringShelf", default: true)
-    static let openShelfByDefault = Key<Bool>("openShelfByDefault", default: true)
+    static let openShelfByDefault = Key<Bool>("openShelfByDefault", default: false)
     static let shelfTapToOpen = Key<Bool>("shelfTapToOpen", default: true)
     static let quickShareProvider = Key<String>("quickShareProvider", default: QuickShareProvider.defaultProvider.id)
     static let copyOnDrag = Key<Bool>("copyOnDrag", default: false)
@@ -217,11 +217,23 @@ extension Defaults.Keys {
     
     // MARK: Clipboard
     static let clipboardHistoryEnabled = Key<Bool>("clipboardHistoryEnabled", default: true)
-    static let clipboardHistoryDays = Key<Int>("clipboardHistoryDays", default: 7)
-    static let clipboardMaxEntries = Key<Int>("clipboardMaxEntries", default: 50)
-    static let clipboardDeleteConfirmEnabled = Key<Bool>("clipboardDeleteConfirmEnabled", default: true)
+    static let clipboardHistoryDays = Key<Int>("clipboardHistoryDays", default: 30)
+    static let clipboardMaxEntries = Key<Int>("clipboardMaxEntries", default: 200)
+    static let clipboardDeleteConfirmEnabled = Key<Bool>("clipboardDeleteConfirmEnabled", default: false)
+    /// Hide entries that look like secrets, or came from a password manager, from agents.
+    static let clipboardAutoProtectSecrets = Key<Bool>("clipboardAutoProtectSecrets", default: true)
+
+    // MARK: Agent bridge (local MCP)
+    /// Off by default: turning it on exposes the shelf and clipboard history to local agents.
+    static let agentBridgeEnabled = Key<Bool>("agentBridgeEnabled", default: false)
     static let shelfDeleteConfirmEnabled = Key<Bool>("shelfDeleteConfirmEnabled", default: true)
-    static let shelfGridExpanded = Key<Bool>("shelfGridExpanded", default: false)
+    static let shelfGridExpanded = Key<Bool>("shelfGridExpanded", default: true)
+
+    // MARK: Mirror shot
+    /// Whether the mirror offers a shutter at all.
+    static let mirrorShotEnabled = Key<Bool>("mirrorShotEnabled", default: true)
+    /// Whether Space takes the shot while the pointer is over the mirror.
+    static let mirrorShotSpaceShortcut = Key<Bool>("mirrorShotSpaceShortcut", default: true)
 
     // MARK: Screen capture
     static let screenCaptureEnabled = Key<Bool>("screenCaptureEnabled", default: true)
@@ -246,7 +258,7 @@ extension Defaults.Keys {
     /// routing signal, including `autoTabRouting` being off.
     static let commandHoverRoute = Key<ModifierRoute>("commandHoverRoute", default: ModifierRoute.clipboard)
     static let optionHoverRoute = Key<ModifierRoute>("optionHoverRoute", default: ModifierRoute.shelf)
-    static let lastShelfPanel = Key<ShelfPanel>("lastShelfPanel", default: ShelfPanel.shelf)
+    static let lastShelfPanel = Key<ShelfPanel>("lastShelfPanel", default: ShelfPanel.clipboard)
     static let shelfDropBoostMinutes = Key<Int>("shelfDropBoostMinutes", default: 3)
     static let clipboardCopyBoostSeconds = Key<Int>("clipboardCopyBoostSeconds", default: 60)
     static let shelfLastDropAt = Key<Date>("shelfLastDropAt", default: .distantPast)
@@ -264,7 +276,7 @@ extension Defaults.Keys {
     static let hideNotchOption = Key<HideNotchOption>("hideNotchOption", default: .nowPlayingOnly)
     
     // MARK: Media Controller
-    static let mediaController = Key<MediaControllerType>("mediaController", default: defaultMediaController)
+    static let mediaController = Key<MediaControllerType>("mediaController", default: MediaControllerType.spotify)
     
     // MARK: Advanced Settings
     static let useCustomAccentColor = Key<Bool>("useCustomAccentColor", default: false)
@@ -284,15 +296,6 @@ extension Defaults.Keys {
             return String(cString: home) + "/Desktop"
         }
         return NSHomeDirectory() + "/Desktop"
-    }
-
-    // Helper to determine the default media controller based on NowPlaying deprecation status
-    static var defaultMediaController: MediaControllerType {
-        if MusicManager.shared.isNowPlayingDeprecated {
-            return .appleMusic
-        } else {
-            return .nowPlaying
-        }
     }
 
     static let didClearLegacyURLCacheV1 = Key<Bool>("didClearLegacyURLCache_v1", default: false)

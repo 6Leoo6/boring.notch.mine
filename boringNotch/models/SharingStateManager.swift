@@ -22,10 +22,34 @@ final class SharingStateManager: ObservableObject {
 			let newValue = activeSessions > 0
 			if newValue != preventNotchClose {
 				preventNotchClose = newValue
-				if !newValue {
+				if newValue {
+					startWatchdog()
+				} else {
+					watchdog?.cancel()
+					watchdog = nil
 					NotificationCenter.default.post(name: .sharingDidFinish, object: nil)
 				}
 			}
+		}
+	}
+
+	/// Ceiling on how long the guard may be held.
+	///
+	/// The guard exists so the notch cannot collapse out from under a share sheet, and every
+	/// path that raises it is supposed to lower it again. When one does not, `close()` returns
+	/// early for the rest of the launch and the window is stuck open with no way back except
+	/// quitting the app — a far worse outcome than a sheet losing its guard. Two minutes is
+	/// long enough that a user still choosing a service is never cut short.
+	private static let maxGuardDuration: Duration = .seconds(120)
+	private var watchdog: Task<Void, Never>?
+
+	private func startWatchdog() {
+		watchdog?.cancel()
+		watchdog = Task { @MainActor [weak self] in
+			try? await Task.sleep(for: Self.maxGuardDuration)
+			guard let self, !Task.isCancelled, self.preventNotchClose else { return }
+			self.activeDelegates.removeAll()
+			self.activeSessions = 0
 		}
 	}
 
@@ -77,6 +101,9 @@ final class SharingLifecycleDelegate: NSObject, NSSharingServiceDelegate, NSShar
 	private var pickerActive = false
 	private var serviceInProgress = false
 	private var finished = false
+	/// How many times this delegate raised the guard. `onBegin` can fire more than once for a
+	/// single share, and the release path used to lower the count exactly once.
+	private var outstandingBegins = 0
 	private var timeoutTask: Task<Void, Never>?
 
 	init(id: UUID, onEnd: @escaping () -> Void, onBegin: @escaping () -> Void, onFinish: @escaping () -> Void) {
@@ -90,23 +117,41 @@ final class SharingLifecycleDelegate: NSObject, NSSharingServiceDelegate, NSShar
 		timeoutTask?.cancel()
 	}
 
+	private func begin() {
+		outstandingBegins += 1
+		onBegin()
+	}
+
 	func markPickerBegan() {
 		guard !pickerActive else { return }
 		pickerActive = true
-		onBegin()
+		begin()
+		// The picker path had NO fallback: its only release was `didChoose`, so a picker that
+		// was dismissed without reporting one — or never shown at all — held the guard for the
+		// rest of the launch.
+		startTimeoutFallback(seconds: 120)
 	}
 
 	func markServiceBegan() {
 		guard !serviceInProgress else { return }
 		serviceInProgress = true
-		onBegin()
-		startTimeoutFallback()
+		begin()
+		startTimeoutFallback(seconds: 2)
 	}
-	
-	private func startTimeoutFallback() {
+
+	/// The interaction never actually started, so drop the delegate without having raised the
+	/// guard at all — used when there is no view to anchor a picker to.
+	func abandon() {
+		guard !finished else { return }
+		finished = true
+		timeoutTask?.cancel()
+		onEnd()
+	}
+
+	private func startTimeoutFallback(seconds: Int) {
 		timeoutTask?.cancel()
 		timeoutTask = Task { @MainActor [weak self] in
-			try? await Task.sleep(for: .seconds(2))
+			try? await Task.sleep(for: .seconds(seconds))
 			guard let self = self, !Task.isCancelled else { return }
 			if !self.finished {
 				self.finishIfNeeded()
@@ -118,7 +163,12 @@ final class SharingLifecycleDelegate: NSObject, NSSharingServiceDelegate, NSShar
 		guard !finished else { return }
 		finished = true
 		timeoutTask?.cancel()
-		onFinish()
+		// Release EVERY begin this delegate issued rather than one of them. A share that
+		// raised the guard twice (picker, then service) left the count permanently above
+		// zero, which pins `preventNotchClose` true and stops the notch ever closing again.
+		let outstanding = outstandingBegins
+		outstandingBegins = 0
+		for _ in 0 ..< outstanding { onFinish() }
 		onEnd()
 	}
 
@@ -134,14 +184,14 @@ final class SharingLifecycleDelegate: NSObject, NSSharingServiceDelegate, NSShar
 
 		service?.delegate = self
 		serviceInProgress = true
-		startTimeoutFallback()
+		startTimeoutFallback(seconds: 2)
 	}
 
 	// MARK: - NSSharingServiceDelegate
 
 	func sharingService(_ sharingService: NSSharingService, willShareItems items: [Any]) {
 		if !pickerActive && !serviceInProgress {
-			onBegin()
+			begin()
 		}
 		serviceInProgress = true
 	}

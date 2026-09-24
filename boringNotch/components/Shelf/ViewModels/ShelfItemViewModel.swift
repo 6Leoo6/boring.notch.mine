@@ -215,12 +215,18 @@ final class ShelfItemViewModel: ObservableObject {
             }
             self.sharingLifecycle = lifecycle
             
+            // The guard is raised only once the picker is actually going on screen. Raising it
+            // first and then skipping `show` left nothing that could ever lower it again.
+            guard let view else {
+                lifecycle.abandon()
+                self.sharingLifecycle = nil
+                stopSharingAccessingURLs()
+                return
+            }
             let picker = NSSharingServicePicker(items: itemsToShare)
             picker.delegate = lifecycle
             lifecycle.markPickerBegan()
-            if let view {
-                picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
-            }
+            picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
         }
     }
     

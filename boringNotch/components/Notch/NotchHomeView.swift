@@ -471,6 +471,7 @@ struct NotchHomeView: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     @ObservedObject var flashlight = FlashlightManager.shared
+    @ObservedObject private var mirrorShot = MirrorShotManager.shared
     let albumArtNamespace: Namespace.ID
 
     // Read through the wrapper, not `Defaults[...]`: a bare subscript registers no SwiftUI
@@ -478,6 +479,11 @@ struct NotchHomeView: View {
     // unrelated publisher to invalidate it before it noticed — which is a pop-in, not a push.
     @Default(.showMirror) private var showMirror
     @Default(.showCalendar) private var showCalendar
+    @Default(.mirrorShotEnabled) private var mirrorShotEnabled
+    // The shot has to be framed the way the mirror is framed, and both of these change that
+    // framing — so the view must invalidate when they do, not read them once.
+    @Default(.mirrorShape) private var mirrorShape
+    @Default(.cornerRadiusScaling) private var cornerRadiusScaling
 
     @State private var mirrorMounted = false
     @State private var mirrorOpen = false
@@ -541,8 +547,30 @@ struct NotchHomeView: View {
                     // Sits INSIDE the animated slot, so the glyph is carried by the push
                     // rather than being laid out against it.
                     .overlay(alignment: .topTrailing) { flashlightToggle }
+                    .overlay(alignment: .topLeading) { mirrorShotButton }
+                    .overlay { mirrorShotFeedback }
+                    // Render-only, so the pulse cannot feed back into the slot that sizes the
+                    // mirror — the measured row height drives that, and nudging it here would
+                    // make the shutter shove the calendar.
+                    .scaleEffect(mirrorShot.shutterFlash ? 0.97 : 1)
+                    .animation(.easeOut(duration: 0.09), value: mirrorShot.shutterFlash)
                     .onHover { hovering in
                         mirrorHovering = hovering
+                        if !hovering { mirrorShot.armSpace(false) }
+                    }
+                    // MOVEMENT, not presence. `onHover` fires twice — once in, once out — so
+                    // arming from it alone would hold Space for as long as the pointer sat
+                    // here, however long that is and whatever the user was typing elsewhere.
+                    // This fires per movement, so a still pointer stops re-arming and the
+                    // idle release takes the key back. `.ended` is a second, independent way
+                    // out that does not depend on `onHover` firing at all.
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active:
+                            mirrorShot.armSpace(mirrorShotEnabled && webcamManager.isSessionRunning)
+                        case .ended:
+                            mirrorShot.armSpace(false)
+                        }
                     }
                     .padding(.leading, widgetGap)
                     // The gap is carried INSIDE the animated slot, so the mirror and the
@@ -573,15 +601,27 @@ struct NotchHomeView: View {
         // left to `onDisappear`: the notch can close while this view is still mounted.
         .onChange(of: shouldShowCamera) { _, shown in
             syncMirror(animated: true)
-            if !shown { flashlight.turnOff() }
+            if !shown {
+                flashlight.turnOff()
+                mirrorShot.armSpace(false)
+            }
         }
         .onChange(of: vm.notchState) { _, state in
-            if state == .closed { flashlight.turnOff() }
+            if state == .closed {
+                flashlight.turnOff()
+                mirrorShot.armSpace(false)
+            }
         }
         .onDisappear {
             mirrorUnmountTask?.cancel()
             flashlight.turnOff()
+            // A bound Space that outlived the view would eat the spacebar everywhere.
+            mirrorShot.armSpace(false)
         }
+        .onAppear { syncShotFraming() }
+        .onChange(of: mirrorSide) { _, _ in syncShotFraming() }
+        .onChange(of: mirrorShape) { _, _ in syncShotFraming() }
+        .onChange(of: cornerRadiusScaling) { _, _ in syncShotFraming() }
         .blur(radius: vm.notchState == .closed ? 30 : 0)
     }
 
@@ -607,6 +647,88 @@ struct NotchHomeView: View {
     /// as before and the parent is still untouched — but the live target is the whole 32x32 box
     /// rather than the 22x22 circle, measured 16 firing points against 9.
     @ViewBuilder
+    /// Radius the mirror is actually drawn with. `CameraPreviewView` uses 100 for the circular
+    /// shape, which on a ~90pt square is simply "a circle"; half the side says that exactly and
+    /// survives a mirror of any size.
+    private var mirrorCornerRadius: CGFloat {
+        guard mirrorShape == .rectangle else { return mirrorSide / 2 }
+        return cornerRadiusScaling
+            ? MusicPlayerImageSizes.cornerRadiusInset.opened
+            : MusicPlayerImageSizes.cornerRadiusInset.closed
+    }
+
+    /// Hands the manager the one thing only this view knows: how round its corners are, as a
+    /// fraction of its side, so the shot can be cut at sensor resolution rather than at the
+    /// 90-odd points the mirror occupies.
+    private func syncShotFraming() {
+        guard mirrorSide > 0 else { return }
+        mirrorShot.cornerRadiusFraction = min(mirrorCornerRadius / mirrorSide, 0.5)
+    }
+
+    /// The shutter, mirroring the flashlight's corner treatment on the opposite side.
+    ///
+    /// Its reveal rides `glyphReveal` — colour alpha, never the subtree's `.opacity` — because
+    /// `.opacity(0)` removes a view from hit testing, which is what made the flashlight glyph
+    /// decorative for a whole release (#57).
+    @ViewBuilder
+    private var mirrorShotButton: some View {
+        if mirrorShotEnabled {
+            Button {
+                mirrorShot.takeShot()
+            } label: {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(glyphReveal))
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.black.opacity(0.55).opacity(glyphReveal)))
+                    .overlay(Circle().stroke(.white.opacity(0.18 * glyphReveal), lineWidth: 0.5))
+                    .padding(5)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .animation(.easeOut(duration: 0.14), value: mirrorHovering)
+            .help(mirrorShot.spaceArmed ? "Copy a shot of yourself (or press Space)" : "Copy a shot of yourself")
+        }
+    }
+
+    /// Shutter flash, then the confirmation.
+    ///
+    /// Two stages because they answer different questions and can only be honest at different
+    /// moments: the flash says "the press landed" and fires before the sensor has handed
+    /// anything over, while "Copied" can only appear once the pasteboard actually holds the
+    /// image. Fast in, slow out — a flash that faded symmetrically read as a dip in brightness
+    /// rather than a shutter.
+    @ViewBuilder
+    private var mirrorShotFeedback: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: mirrorCornerRadius)
+                .fill(.white)
+                .opacity(mirrorShot.shutterFlash ? 0.9 : 0)
+                .animation(
+                    mirrorShot.shutterFlash ? .easeOut(duration: 0.04) : .easeIn(duration: 0.3),
+                    value: mirrorShot.shutterFlash
+                )
+
+            if mirrorShot.justCopied {
+                ZStack {
+                    RoundedRectangle(cornerRadius: mirrorCornerRadius).fill(.black.opacity(0.45))
+                    VStack(spacing: 2) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Copied")
+                            .font(.system(size: 8, weight: .medium, design: .rounded))
+                    }
+                    .foregroundStyle(.white)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
+        }
+        // The mirror's own tap gesture starts and stops the session; a feedback layer that
+        // swallowed clicks would make the mirror stop responding for a second after every shot.
+        .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.18), value: mirrorShot.justCopied)
+    }
+
     private var flashlightToggle: some View {
         Button {
             #if DEBUG

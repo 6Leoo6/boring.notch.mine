@@ -83,6 +83,11 @@
 		1471A8592C6281BD0058408D /* BoringNotchWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1471A8582C6281BD0058408D /* BoringNotchWindow.swift */; };
 		149E0B972C737D00006418B1 /* WebcamManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 149E0B962C737D00006418B1 /* WebcamManager.swift */; };
 		B19016A22CC15B5000E3F003 /* FlashlightManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B19016A32CC15B5000E3F004 /* FlashlightManager.swift */; };
+		B19016C12CC15B5000E3F023 /* MusicPeekView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B19016C22CC15B5000E3F024 /* MusicPeekView.swift */; };
+		B19016B12CC15B5000E3F013 /* MirrorShotManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B19016B22CC15B5000E3F014 /* MirrorShotManager.swift */; };
+		B1A6E0012F10000100000001 /* AgentBridgeServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A6E0012F10000100000002 /* AgentBridgeServer.swift */; };
+		B1A6E0012F10000100000003 /* AgentBridgeRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A6E0012F10000100000004 /* AgentBridgeRouter.swift */; };
+		B1A6E0012F10000100000005 /* ClipboardProtection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A6E0012F10000100000006 /* ClipboardProtection.swift */; };
 		B19016B02CC15B5000E3F010 /* ScreenCaptureManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B19016B12CC15B5000E3F011 /* ScreenCaptureManager.swift */; };
 		B19016A02CC15B5000E3F001 /* SleepManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B19016A12CC15B5000E3F002 /* SleepManager.swift */; };
 		149E0B9A2C737D40006418B1 /* WebcamView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 149E0B992C737D40006418B1 /* WebcamView.swift */; };
@@ -259,6 +264,11 @@
 		1471A8582C6281BD0058408D /* BoringNotchWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoringNotchWindow.swift; sourceTree = "<group>"; };
 		149E0B962C737D00006418B1 /* WebcamManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebcamManager.swift; sourceTree = "<group>"; };
 		B19016A32CC15B5000E3F004 /* FlashlightManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlashlightManager.swift; sourceTree = "<group>"; };
+		B19016C22CC15B5000E3F024 /* MusicPeekView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicPeekView.swift; sourceTree = "<group>"; };
+		B19016B22CC15B5000E3F014 /* MirrorShotManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirrorShotManager.swift; sourceTree = "<group>"; };
+		B1A6E0012F10000100000002 /* AgentBridgeServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentBridgeServer.swift; sourceTree = "<group>"; };
+		B1A6E0012F10000100000004 /* AgentBridgeRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentBridgeRouter.swift; sourceTree = "<group>"; };
+		B1A6E0012F10000100000006 /* ClipboardProtection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardProtection.swift; sourceTree = "<group>"; };
 		B19016B12CC15B5000E3F011 /* ScreenCaptureManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureManager.swift; sourceTree = "<group>"; };
 		B19016A12CC15B5000E3F002 /* SleepManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepManager.swift; sourceTree = "<group>"; };
 		149E0B992C737D40006418B1 /* WebcamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebcamView.swift; sourceTree = "<group>"; };
@@ -533,6 +543,10 @@
 				147163992C5D35FF0068B555 /* MusicManager.swift */,
 				149E0B962C737D00006418B1 /* WebcamManager.swift */,
 				B19016A32CC15B5000E3F004 /* FlashlightManager.swift */,
+				B19016B22CC15B5000E3F014 /* MirrorShotManager.swift */,
+				B1A6E0012F10000100000002 /* AgentBridgeServer.swift */,
+				B1A6E0012F10000100000004 /* AgentBridgeRouter.swift */,
+				B1A6E0012F10000100000006 /* ClipboardProtection.swift */,
 				B19016B12CC15B5000E3F011 /* ScreenCaptureManager.swift */,
 				B19016A12CC15B5000E3F002 /* SleepManager.swift */,
 				14C08BB52C8DE42D000F8AA0 /* CalendarManager.swift */,
@@ -765,6 +779,7 @@
 				115C12EB2ED3D003009754CA /* OpenNotchHUD.swift */,
 				14D570CC2C5F4BB70011E668 /* BoringBattery.swift */,
 				B1C974332C642B6D0000E707 /* MarqueeTextView.swift */,
+				B19016C22CC15B5000E3F024 /* MusicPeekView.swift */,
 				B1D365CD2C6A979C0047BDBC /* LiveActivityModifier.swift */,
 				B1D365CF2C6A9A6C0047BDBC /* SystemEventIndicatorModifier.swift */,
 				14E9FEA92C70BF610062E83F /* DownloadView.swift */,
@@ -1050,6 +1065,11 @@
 				14288DDC2C6E015000B9F80C /* AudioPlayer.swift in Sources */,
 				149E0B972C737D00006418B1 /* WebcamManager.swift in Sources */,
 				B19016A22CC15B5000E3F003 /* FlashlightManager.swift in Sources */,
+				B19016C12CC15B5000E3F023 /* MusicPeekView.swift in Sources */,
+				B19016B12CC15B5000E3F013 /* MirrorShotManager.swift in Sources */,
+				B1A6E0012F10000100000001 /* AgentBridgeServer.swift in Sources */,
+				B1A6E0012F10000100000003 /* AgentBridgeRouter.swift in Sources */,
+				B1A6E0012F10000100000005 /* ClipboardProtection.swift in Sources */,
 				B19016B02CC15B5000E3F010 /* ScreenCaptureManager.swift in Sources */,
 				B19016A02CC15B5000E3F001 /* SleepManager.swift in Sources */,
 				14288E0C2C6F8EC000B9F80C /* AppIcons.swift in Sources */,

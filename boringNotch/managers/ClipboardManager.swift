@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import CoreGraphics
 import CryptoKit
 import Defaults
 import Foundation
@@ -17,6 +18,10 @@ struct ClipboardEntry: Identifiable {
     /// eviction path. Declared `var` with a default so it stays out of the way of the
     /// memberwise initialiser's existing call sites.
     var isPinned: Bool = false
+    /// The user's explicit answer to "may agents read this?". nil defers to automatic
+    /// detection (`ClipboardProtection`); true hides it, false exposes it even when it looks
+    /// like a secret — the user wants agents able to read keys they chose to hand over.
+    var protectionOverride: Bool? = nil
 
     enum ClipboardContent {
         case text(String)
@@ -36,7 +41,8 @@ struct ClipboardEntry: Identifiable {
             content: content ?? self.content,
             timestamp: timestamp ?? self.timestamp,
             sourceApp: sourceApp,
-            isPinned: isPinned
+            isPinned: isPinned,
+            protectionOverride: protectionOverride
         )
     }
 }
@@ -63,6 +69,8 @@ private struct PersistedEntry: Codable, Sendable {
     /// miscellaneous error occurred"). A bookmark minted at capture time, while the
     /// extension is still live, restores that right on every later launch.
     let fileBookmarks: [Data]?
+    // Optional for the same reason as `isPinned`: older files decode with every entry on auto.
+    let protectionOverride: Bool?
 
     enum Kind: Codable, Sendable {
         case text(String)
@@ -71,7 +79,9 @@ private struct PersistedEntry: Codable, Sendable {
     }
 }
 
-private enum ClipboardPaths {
+/// Not file-private: `ClipboardDragFileStore` resolves the already-written PNG for an
+/// entry rather than encoding a second copy of it.
+enum ClipboardPaths {
     static var supportDir: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
@@ -202,6 +212,10 @@ final class ClipboardManager: ObservableObject {
 
     private let saveDebounce: Duration = .milliseconds(250)
 
+    /// Automatic detection result per entry, `.some(nil)` meaning "scanned, looks harmless".
+    /// Cached because tiles ask on every body evaluation and the scan is a batch of regexes.
+    private var detectedProtection: [UUID: String?] = [:]
+
     /// Pinned entries keep their place in the history rather than moving to a list of their
     /// own. Pinning is a promise about LIFETIME, not a filing action: the entry is still the
     /// thing the user copied at that moment, and moving it out would make the main list lie
@@ -224,10 +238,27 @@ final class ClipboardManager: ObservableObject {
 
     // MARK: - Polling
 
+    /// Seconds since the user last touched the keyboard, mouse or trackpad. No permission
+    /// needed, unlike an event tap.
+    private static var secondsSinceUserInput: TimeInterval {
+        guard let anyInput = CGEventType(rawValue: ~0) else { return 0 }
+        return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput)
+    }
+
+    /// How long the poll waits before looking at the pasteboard again.
+    ///
+    /// `changeCount` is a level, not an edge: whatever the interval, the next poll always sees
+    /// the pasteboard as it stands. So the interval only buys how quickly a copy shows up in the
+    /// history — and the history is not read until the user has walked the pointer to the notch.
+    ///
+    /// Measured at 0.5s this was ~2 wakeups/s for the entire life of the process, and the run on
+    /// 11 Sep showed the app waking MORE while the user was away (17.4/s) than while they were
+    /// at the keyboard (7.8/s), which is the wrong way round for something that only has work to
+    /// do when a person copies something.
     private var pollInterval: TimeInterval {
         let battery = BatteryStatusViewModel.shared
+        if Self.secondsSinceUserInput >= 60 { return 5.0 }
         if battery.isInLowPowerMode { return 2.5 }
-        if battery.isCharging { return 0.5 }
         return 1.0
     }
 
@@ -391,6 +422,7 @@ final class ClipboardManager: ObservableObject {
 
         let updated = items[index].replacing(content: .text(text))
         items[index] = updated
+        detectedProtection[id] = nil
 
         if BoringViewCoordinator.shared.clipboardPreviewEntry?.id == id {
             BoringViewCoordinator.shared.clipboardPreviewEntry = updated
@@ -513,10 +545,80 @@ final class ClipboardManager: ObservableObject {
         return bookmarks
     }
 
+    // MARK: - Agent protection
+
+    /// Why agents may not read this entry, or nil when they may.
+    func protectionReason(for entry: ClipboardEntry) -> String? {
+        if let override = entry.protectionOverride {
+            return override ? "Marked protected" : nil
+        }
+        guard Defaults[.clipboardAutoProtectSecrets] else { return nil }
+        if let cached = detectedProtection[entry.id] { return cached }
+        let reason = ClipboardProtection.detectedReason(content: entry.content, sourceApp: entry.sourceApp)
+        detectedProtection[entry.id] = .some(reason)
+        return reason
+    }
+
+    func isProtected(_ entry: ClipboardEntry) -> Bool {
+        protectionReason(for: entry) != nil
+    }
+
+    /// Flips what agents currently see, recording it as an explicit choice so it outlives a
+    /// change to the auto-detect setting. In place, like `togglePin`.
+    func toggleProtection(id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].protectionOverride = !isProtected(items[index])
+        if BoringViewCoordinator.shared.clipboardPreviewEntry?.id == id {
+            BoringViewCoordinator.shared.clipboardPreviewEntry = items[index]
+        }
+        persist()
+    }
+
+    // MARK: - Agent writes
+
+    enum AgentInput {
+        case text(String)
+        /// PNG or TIFF bytes.
+        case image(Data)
+        case fileURLs([URL])
+    }
+
+    /// Records content an agent handed over, exactly as if it had been copied, without
+    /// touching the system pasteboard. Returns nil when the content is unusable.
+    func addFromAgent(_ input: AgentInput, pin: Bool, sourceApp: String) -> ClipboardEntry? {
+        var entry: ClipboardEntry
+        var imageSource: Data?
+        switch input {
+        case .text(let text):
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            entry = ClipboardEntry(id: .init(), content: .text(text), timestamp: Date(), sourceApp: sourceApp)
+        case .image(let data):
+            guard let image = NSImage(data: data) else { return nil }
+            let hash = Self.hash(of: data)
+            if let duplicate = items.first(where: { imageHashes[$0.id] == hash }) {
+                promote(duplicate)
+                if pin, let index = items.firstIndex(where: { $0.id == duplicate.id }), !items[index].isPinned {
+                    togglePin(id: duplicate.id)
+                }
+                return items.first { $0.id == duplicate.id }
+            }
+            entry = ClipboardEntry(id: .init(), content: .image(image), timestamp: Date(), sourceApp: sourceApp)
+            imageHashes[entry.id] = hash
+            imageSource = data
+        case .fileURLs(let urls):
+            guard !urls.isEmpty else { return nil }
+            entry = ClipboardEntry(id: .init(), content: .fileURLs(urls), timestamp: Date(), sourceApp: sourceApp)
+        }
+        entry.isPinned = pin
+        addEntry(entry, imageSource: imageSource)
+        return entry
+    }
+
     func remove(id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items.remove(at: index)
         imageHashes[id] = nil
+        detectedProtection[id] = nil
         fileBookmarks[id] = nil
         pasteboardScopedIDs.remove(id)
         ClipboardDragFileStore.shared.discard(id)
@@ -541,6 +643,7 @@ final class ClipboardManager: ObservableObject {
         }
         items = kept
         imageHashes = imageHashes.filter { keptIDs.contains($0.key) }
+        detectedProtection = detectedProtection.filter { keptIDs.contains($0.key) }
         fileBookmarks = fileBookmarks.filter { keptIDs.contains($0.key) }
         pasteboardScopedIDs = pasteboardScopedIDs.intersection(keptIDs)
         if let previewed = BoringViewCoordinator.shared.clipboardPreviewEntry,
@@ -574,6 +677,7 @@ final class ClipboardManager: ObservableObject {
         if kept.count != items.count {
             let survivors = Set(kept.map(\.id))
             imageHashes = imageHashes.filter { survivors.contains($0.key) }
+            detectedProtection = detectedProtection.filter { survivors.contains($0.key) }
             fileBookmarks = fileBookmarks.filter { survivors.contains($0.key) }
             pasteboardScopedIDs = pasteboardScopedIDs.intersection(survivors)
             for dropped in items where !survivors.contains(dropped.id) {
@@ -647,7 +751,8 @@ final class ClipboardManager: ObservableObject {
             content: content,
             timestamp: persisted.timestamp,
             sourceApp: persisted.sourceApp,
-            isPinned: persisted.isPinned ?? false
+            isPinned: persisted.isPinned ?? false,
+            protectionOverride: persisted.protectionOverride
         )
     }
 
@@ -706,7 +811,8 @@ final class ClipboardManager: ObservableObject {
             sourceApp: entry.sourceApp,
             imageHash: imageHashes[entry.id],
             isPinned: entry.isPinned,
-            fileBookmarks: fileBookmarks[entry.id]
+            fileBookmarks: fileBookmarks[entry.id],
+            protectionOverride: entry.protectionOverride
         )
     }
 

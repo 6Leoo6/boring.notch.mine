@@ -12,7 +12,7 @@ class AudioSpectrum: NSView {
     private var barLayers: [CAShapeLayer] = []
     private var barScales: [CGFloat] = []
     private var isPlaying: Bool = true
-    private var animationTimer: Timer?
+    private var isAnimating = false
     
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -54,38 +54,55 @@ class AudioSpectrum: NSView {
         }
     }
     
+    /// How long one bar holds a height before moving to the next.
+    private static let stepDuration: CFTimeInterval = 0.3
+    /// Random heights baked into a single repeating cycle. Long enough that the loop is not
+    /// legible as a loop, short enough to stay a cheap animation to hand the render server.
+    private static let stepsPerCycle = 32
+
     private func startAnimating() {
-        guard animationTimer == nil else { return }
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
-            self?.updateBars()
+        guard !isAnimating else { return }
+        isAnimating = true
+        for (i, barLayer) in barLayers.enumerated() {
+            barLayer.add(Self.makeCycle(stagger: i), forKey: "scaleY")
         }
     }
-    
+
     private func stopAnimating() {
-        animationTimer?.invalidate()
-        animationTimer = nil
+        isAnimating = false
         resetBars()
     }
-    
-    private func updateBars() {
-        for (i, barLayer) in barLayers.enumerated() {
-            let currentScale = barScales[i]
-            let targetScale = CGFloat.random(in: 0.35 ... 1.0)
-            barScales[i] = targetScale
-            let animation = CABasicAnimation(keyPath: "transform.scale.y")
-            animation.fromValue = currentScale
-            animation.toValue = targetScale
-            animation.duration = 0.3
-            animation.autoreverses = true
-            animation.fillMode = .forwards
-            animation.isRemovedOnCompletion = false
-            if #available(macOS 13.0, *) {
-                animation.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 24, preferred: 24)
-            }
-            barLayer.add(animation, forKey: "scaleY")
+
+    /// One long repeating keyframe cycle per bar, instead of a 0.3s `Timer` that pushed four
+    /// fresh `CABasicAnimation`s on every tick.
+    ///
+    /// That timer cost ~3.3 wakeups per second for the entire time music was playing — to drive
+    /// a decoration whose heights are random anyway, and which nobody is necessarily looking at.
+    /// Baked into keyframes the render server runs the whole thing without waking this process
+    /// at all, and the motion is indistinguishable.
+    private static func makeCycle(stagger: Int) -> CAKeyframeAnimation {
+        var values: [CGFloat] = [0.35]
+        for _ in 0 ..< stepsPerCycle {
+            values.append(.random(in: 0.35 ... 1.0))
         }
+        // Close the loop on the value it started from, or the repeat shows a visible jump.
+        values.append(0.35)
+
+        let animation = CAKeyframeAnimation(keyPath: "transform.scale.y")
+        animation.values = values
+        animation.duration = stepDuration * Double(values.count - 1)
+        animation.calculationMode = .linear
+        animation.repeatCount = .infinity
+        animation.isRemovedOnCompletion = false
+        animation.fillMode = .forwards
+        // Offset each bar into a different part of the cycle so they do not pulse in lockstep.
+        animation.timeOffset = Double(stagger) * stepDuration * 1.7
+        if #available(macOS 13.0, *) {
+            animation.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 24, preferred: 24)
+        }
+        return animation
     }
-    
+
     private func resetBars() {
         for (i, barLayer) in barLayers.enumerated() {
             barLayer.removeAllAnimations()

@@ -54,6 +54,9 @@ struct SettingsView: View {
                 NavigationLink(value: "Clipboard") {
                     Label("Clipboard", systemImage: "clipboard")
                 }
+                NavigationLink(value: "Agents") {
+                    Label("Agents", systemImage: "point.3.connected.trianglepath.dotted")
+                }
                 NavigationLink(value: "ScreenCapture") {
                     Label("Screen capture", systemImage: "camera.viewfinder")
                 }
@@ -93,6 +96,8 @@ struct SettingsView: View {
                     Shelf()
                 case "Clipboard":
                     ClipboardSettings()
+                case "Agents":
+                    AgentBridgeSettings()
                 case "ScreenCapture":
                     ScreenCaptureSettings()
                 case "Shortcuts":
@@ -1135,6 +1140,89 @@ struct ClipboardSettings: View {
     }
 }
 
+struct AgentBridgeSettings: View {
+    @Default(.agentBridgeEnabled) var enabled: Bool
+    @Default(.clipboardAutoProtectSecrets) var autoProtect: Bool
+    @ObservedObject private var server = AgentBridgeServer.shared
+    @State private var copiedCommand = false
+
+    static let helperPath = "~/.local/bin/boringnotch-mcp"
+    static let setupCommand = "claude mcp add --scope user boringnotch -- \(helperPath)"
+
+    var body: some View {
+        Form {
+            Section {
+                Defaults.Toggle(key: .agentBridgeEnabled) {
+                    Text("Allow local agents to use the shelf and clipboard")
+                }
+                .onChange(of: enabled) { _, isEnabled in
+                    Task { @MainActor in AgentBridgeServer.shared.setEnabled(isEnabled) }
+                }
+                LabeledContent("Status") {
+                    statusLabel
+                }
+            } header: {
+                Text("MCP server")
+            } footer: {
+                Text("Agents connect through the boringnotch-mcp helper, which finds this app via \(AgentBridgeDiscovery.displayPath). The server only listens on this Mac, and its access token changes every time the app starts.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section {
+                Defaults.Toggle(key: .clipboardAutoProtectSecrets) {
+                    Text("Hide secrets from agents automatically")
+                }
+            } header: {
+                Text("Clipboard protection")
+            } footer: {
+                Text("Entries copied from a password manager, or that look like API keys, tokens or private keys, are listed to agents without their content. Right-click any clipboard item to hide it from agents or to allow it anyway.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section {
+                HStack {
+                    Text(Self.setupCommand)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                    Spacer()
+                    Button(copiedCommand ? "Copied" : "Copy") {
+                        // Kept out of the history: a setup command is not something the user copied
+                        ClipboardManager.shared.copyWithoutRecording([Self.setupCommand as NSString])
+                        copiedCommand = true
+                    }
+                }
+            } header: {
+                Text("Connect Claude Code")
+            } footer: {
+                Text("Build and install the helper with mcp-helper/install.sh from the repository first.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .accentColor(.effectiveAccent)
+        .navigationTitle("Agents")
+    }
+
+    @ViewBuilder
+    private var statusLabel: some View {
+        switch server.state {
+        case .stopped:
+            Text("Off").foregroundStyle(.secondary)
+        case .starting:
+            Text("Starting…").foregroundStyle(.secondary)
+        case .listening(let port):
+            Label("Listening on 127.0.0.1:\(port)", systemImage: "checkmark.circle")
+                .foregroundStyle(.green)
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+        }
+    }
+}
+
 struct ScreenCaptureSettings: View {
     @ObservedObject private var manager = ScreenCaptureManager.shared
     @Default(.screenCaptureEnabled) var enabled: Bool
@@ -1641,6 +1729,19 @@ struct Appearance: View {
                     Text("Square")
                         .tag(MirrorShapeEnum.rectangle)
                 }
+                Defaults.Toggle(key: .mirrorShotEnabled) {
+                    Text("Shutter button on the mirror")
+                }
+                .disabled(!checkVideoInput())
+                Defaults.Toggle(key: .mirrorShotSpaceShortcut) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Space takes the shot while the pointer is on the mirror")
+                        Text("Space is only bound while you are hovering the mirror, so it stays free everywhere else.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .disabled(!checkVideoInput() || !Defaults[.mirrorShotEnabled])
                 Defaults.Toggle(key: .showNotHumanFace) {
                     Text("Show cool face animation while inactive")
                 }

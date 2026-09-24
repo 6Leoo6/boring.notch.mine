@@ -523,34 +523,134 @@ final class ClipboardDragFileStore {
 
     func url(for id: UUID) -> URL? { files[id] }
 
+    /// Root for drag staging. One directory per ENTRY, not one per call: the previous scheme
+    /// minted a fresh UUID directory on every hover and never removed it, which left 258
+    /// directories and 95MB of duplicated PNGs behind over two days of use — the same image
+    /// re-encoded 31 times, once per launch it was hovered in.
+    private static var stagingRoot: URL {
+        URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ClipboardDrags", isDirectory: true)
+    }
+
     func prepare(_ entry: ClipboardEntry) {
         guard case .image(let image) = entry.content,
               files[entry.id] == nil,
-              !inFlight.contains(entry.id),
-              let tiff = image.tiffRepresentation
+              !inFlight.contains(entry.id)
         else { return }
 
-        inFlight.insert(entry.id)
         let name = "Clipboard \(Self.stampFormatter.string(from: entry.timestamp)).png"
         let id = entry.id
+
+        // The capture path already wrote this image to disk as a PNG. Hard-linking that file
+        // costs no bytes and no encode; the old path pulled an uncompressed full-resolution
+        // `tiffRepresentation` into memory and re-encoded a PNG that already existed. Hovering
+        // across a panel of screenshots fired one of those per tile CONCURRENTLY, which is what
+        // took the app to 400MB+ and 84% of a core for three minutes.
+        let persisted = ClipboardPaths.imagesDir
+            .appendingPathComponent(ClipboardPaths.imageFilename(for: id))
+        if FileManager.default.fileExists(atPath: persisted.path),
+           let staged = Self.stage(persisted, as: name, for: id)
+        {
+            files[id] = staged
+            return
+        }
+
+        // Only reached while the capture's own write is still in flight.
+        guard let tiff = image.tiffRepresentation else { return }
+        inFlight.insert(id)
         Task {
             // Only `Data` crosses the boundary, so the NSImage stays on the main actor
             let png = await Task.detached(priority: .utility) {
                 NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
             }.value
             defer { inFlight.remove(id) }
-            guard let png,
-                  let url = await TemporaryFileStorageService.shared.createTempFile(
-                      for: .data(png, suggestedName: name)
-                  )
-            else { return }
+            guard let png, let url = Self.write(png, as: name, for: id) else { return }
             files[id] = url
         }
     }
 
+    private static func entryDirectory(for id: UUID) -> URL {
+        stagingRoot.appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
+    /// Links `source` into the entry's staging directory, falling back to a copy when the two
+    /// are not on the same volume. Re-staging overwrites in place, so this cannot accumulate.
+    private static func stage(_ source: URL, as name: String, for id: UUID) -> URL? {
+        let fm = FileManager.default
+        let directory = entryDirectory(for: id)
+        let file = directory.appendingPathComponent(name)
+        if fm.fileExists(atPath: file.path) { return file }
+        guard (try? fm.createDirectory(at: directory, withIntermediateDirectories: true)) != nil
+        else { return nil }
+        if (try? fm.linkItem(at: source, to: file)) != nil { return file }
+        return (try? fm.copyItem(at: source, to: file)) != nil ? file : nil
+    }
+
+    private static func write(_ data: Data, as name: String, for id: UUID) -> URL? {
+        let fm = FileManager.default
+        let directory = entryDirectory(for: id)
+        let file = directory.appendingPathComponent(name)
+        guard (try? fm.createDirectory(at: directory, withIntermediateDirectories: true)) != nil
+        else { return nil }
+        return (try? data.write(to: file, options: .atomic)) != nil ? file : nil
+    }
+
+    /// Clears staging left by earlier launches. `discard` only ever fired for entries removed
+    /// during the session that staged them, so everything else survived forever.
+    func sweepOrphanedStaging(keeping live: Set<UUID>) {
+        let root = Self.stagingRoot
+        Task.detached(priority: .background) {
+            let fm = FileManager.default
+            guard let directories = try? fm.contentsOfDirectory(
+                at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+            ) else { return }
+            for directory in directories {
+                guard let id = UUID(uuidString: directory.lastPathComponent), !live.contains(id)
+                else { continue }
+                try? fm.removeItem(at: directory)
+            }
+        }
+        sweepLegacyStaging()
+    }
+
+    /// Reclaims staging written before this store used a stable per-entry path. Those went to a
+    /// freshly minted UUID directory at the temp root on every hover and nothing could find them
+    /// again, so they are pure garbage — but the temp root is shared with the shelf's own drag
+    /// files, hence the narrow test: a lone `Clipboard ….png` in a UUID-named directory that has
+    /// not been touched for ten minutes, so a drag in flight is never pulled out from under.
+    private func sweepLegacyStaging() {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+        Task.detached(priority: .background) {
+            let fm = FileManager.default
+            guard let directories = try? fm.contentsOfDirectory(
+                at: root, includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            ) else { return }
+            let cutoff = Date().addingTimeInterval(-600)
+            for directory in directories {
+                guard UUID(uuidString: directory.lastPathComponent) != nil,
+                      let contents = try? fm.contentsOfDirectory(
+                          at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+                      ),
+                      contents.count == 1,
+                      let file = contents.first,
+                      file.lastPathComponent.hasPrefix("Clipboard "),
+                      file.pathExtension == "png",
+                      let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey])
+                          .contentModificationDate,
+                      modified < cutoff
+                else { continue }
+                try? fm.removeItem(at: directory)
+            }
+        }
+    }
+
     func discard(_ id: UUID) {
-        guard let url = files.removeValue(forKey: id) else { return }
-        TemporaryFileStorageService.shared.removeTemporaryFileIfNeeded(at: url)
+        files.removeValue(forKey: id)
+        let directory = Self.entryDirectory(for: id)
+        Task.detached(priority: .background) {
+            try? FileManager.default.removeItem(at: directory)
+        }
     }
 }
 
@@ -558,6 +658,10 @@ final class ClipboardDragFileStore {
 
 struct ClipboardHistoryView: View {
     @ObservedObject var manager = ClipboardManager.shared
+    @Default(.agentBridgeEnabled) private var agentBridgeEnabled
+    /// Read only so the tiles re-evaluate their lock when the setting flips; the manager
+    /// consults `Defaults` itself.
+    @Default(.clipboardAutoProtectSecrets) private var autoProtectSecrets
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     let rows: Int
     let pinnedTileSide: CGFloat
@@ -666,7 +770,8 @@ struct ClipboardHistoryView: View {
             tileSize: tileSize,
             timeLabel: relativeTime(from: entry.timestamp, now: now),
             canOpen: manager.canOpenFiles(entry),
-            onPinnedPage: manager.showsPinnedOnly
+            onPinnedPage: manager.showsPinnedOnly,
+            agentAccess: agentBridgeEnabled ? (manager.isProtected(entry) ? .hidden : .allowed) : nil
         ) {
             manager.copy(entry)
         } onPreview: {
@@ -682,6 +787,8 @@ struct ClipboardHistoryView: View {
             manager.openFiles(entry)
         } onTogglePin: {
             togglePin(entry)
+        } onToggleProtection: {
+            manager.toggleProtection(id: entry.id)
         } onDelete: {
             withAnimation(.smooth) {
                 manager.remove(id: entry.id)
@@ -855,11 +962,17 @@ private struct ClipboardEntryTile: View {
     /// from here is the only route back for an entry, and #47 deliberately keeps the page
     /// reachable-out-of for exactly that reason.
     let onPinnedPage: Bool
+    /// What local agents may do with this entry, or nil while agent access is off — then
+    /// protection means nothing and the tile carries no trace of it.
+    let agentAccess: AgentAccess?
     let onTap: () -> Void
     let onPreview: () -> Void
     let onOpen: () -> Void
     let onTogglePin: () -> Void
+    let onToggleProtection: () -> Void
     let onDelete: () -> Void
+
+    enum AgentAccess { case allowed, hidden }
 
     @State private var isCopied = false
     @State private var showDeleteConfirm = false
@@ -954,6 +1067,20 @@ private struct ClipboardEntryTile: View {
                     .opacity(entry.isPinned && !isHovering && !onPinnedPage ? 1 : 0)
                     .animation(.easeInOut(duration: 0.15), value: isHovering)
                     .animation(.easeInOut(duration: 0.15), value: entry.isPinned)
+                    .allowsHitTesting(false)
+
+                // Hidden-from-agents marker, top-left at rest. The hover slot there is the
+                // preview/open control, which is harmless to land on, unlike the trash.
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(.black.opacity(0.6)))
+                    .padding(4)
+                    .frame(width: tileSize, height: tileSize, alignment: .topLeading)
+                    .opacity(agentAccess == .hidden && !isHovering ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.15), value: isHovering)
                     .allowsHitTesting(false)
 
                 // Copied checkmark overlay
@@ -1100,6 +1227,15 @@ private struct ClipboardEntryTile: View {
             if offersOpen {
                 Button(action: onOpen) {
                     Label("Open", systemImage: "arrow.up.forward")
+                }
+            }
+            if let agentAccess {
+                Button(action: onToggleProtection) {
+                    if agentAccess == .hidden {
+                        Label("Allow Agents to Read", systemImage: "lock.open")
+                    } else {
+                        Label("Hide from Agents", systemImage: "lock")
+                    }
                 }
             }
             Divider()

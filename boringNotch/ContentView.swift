@@ -26,6 +26,10 @@ struct ContentView: View {
     @State private var hoverTask: Task<Void, Never>?
     @State private var closeWatchTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
+    /// Width of the closed strip, measured rather than derived: it is the sum of artwork,
+    /// a rectangle sized off `closedNotchSize`, a visualizer and two stack spacings, and
+    /// reproducing that arithmetic here would break the moment any of them changes.
+    @State private var closedStripWidth: CGFloat = 0
     @State private var anyDropDebounceTask: Task<Void, Never>?
 
     @State private var gestureProgress: CGFloat = .zero
@@ -509,6 +513,18 @@ struct ContentView: View {
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
                           MusicLiveActivity()
                               .frame(alignment: .center)
+                              // The strip is what sets the island's width while a peek is up
+                              // (`fixedSize` makes the island hug the widest child, and that
+                              // is this one at ~250pt, not the 183pt notch). The peek needs
+                              // that number to centre on the island rather than on the notch.
+                              .background {
+                                  GeometryReader { proxy in
+                                      Color.clear.preference(
+                                          key: ClosedStripWidthKey.self,
+                                          value: proxy.size.width
+                                      )
+                                  }
+                              }
                       } else if !coordinator.expandingView.show && vm.notchState == .closed && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {
                           BoringFaceAnimation()
                        } else if vm.notchState == .open {
@@ -540,17 +556,31 @@ struct ContentView: View {
                               .padding(.leading, 4)
                               .padding(.trailing, 8)
                           }
-                          // Old sneak peek music
                           else if coordinator.sneakPeek.type == .music {
                               if vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard {
-                                  HStack(alignment: .center) {
-                                      Image(systemName: "music.note")
-                                      GeometryReader { geo in
-                                          MarqueeText(.constant(musicManager.songTitle + " - " + musicManager.artistName),  textColor: Defaults[.playerColorTinting] ? .playerTint(from: musicManager.avgColor, fallback: .gray) : .gray, minDuration: 1, frameWidth: geo.size.width)
-                                      }
-                                  }
-                                  .foregroundStyle(.gray)
-                                  .padding(.bottom, 10)
+                                  MusicPeekView()
+                                      // Every stack above this one is `.leading`, so without
+                                      // an explicit centre the peek sits flush left. Measured
+                                      // 25.2pt off centre before this. The width comes from
+                                      // the strip rather than from `closedNotchSize`, because
+                                      // the strip is the wider child and therefore the one
+                                      // the island sizes itself to; `minWidth` so a title
+                                      // wider than the strip still grows and self-centres.
+                                      .frame(
+                                          minWidth: max(closedStripWidth, vm.closedNotchSize.width),
+                                          alignment: .center
+                                      )
+                                      .padding(.top, 4)
+                                      .padding(.bottom, 10)
+                                      // Slides out from behind the island rather than fading
+                                      // in on the spot, so the island reads as the thing that
+                                      // emitted it. The old peek had no transition of its own
+                                      // and inherited whatever the container was doing.
+                                      .transition(
+                                          .move(edge: .top)
+                                              .combined(with: .opacity)
+                                              .combined(with: .scale(scale: 0.94, anchor: .top))
+                                      )
                               }
                           }
                       }
@@ -561,6 +591,9 @@ struct ContentView: View {
                       .fixedSize()
               }
               .zIndex(2)
+              .onPreferenceChange(ClosedStripWidthKey.self) { width in
+                  closedStripWidth = width
+              }
             if vm.notchState == .open {
                 VStack {
                     switch coordinator.currentView {
@@ -1152,4 +1185,14 @@ struct GeneralDropTargetDelegate: DropDelegate {
     return ContentView()
         .environmentObject(vm)
         .frame(width: vm.notchSize.width, height: vm.notchSize.height)
+}
+
+/// Width of the closed-notch strip, published upward so the music peek can centre on the
+/// island. `max` rather than last-wins: only one strip is ever mounted, but a reduce that
+/// takes the newest value would adopt a zero from a view on its way out.
+private struct ClosedStripWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
 }

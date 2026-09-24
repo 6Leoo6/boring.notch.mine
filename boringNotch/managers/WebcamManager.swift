@@ -13,6 +13,11 @@ class WebcamManager: NSObject, ObservableObject {
     @Published var previewLayer: AVCaptureVideoPreviewLayer?
     
     private var captureSession: AVCaptureSession?
+    /// Kept so a still can be pulled from the running session. The session is built with this
+    /// output and a nil delegate, so no frames are delivered until something asks for one.
+    private var videoOutput: AVCaptureVideoDataOutput?
+    private var frameGrabber: FrameGrabber?
+    private let frameQueue = DispatchQueue(label: "BoringNotch.WebcamManager.FrameQueue", qos: .userInitiated)
     @Published var isSessionRunning: Bool = false
     
     @Published var authorizationStatus: AVAuthorizationStatus = .notDetermined
@@ -169,6 +174,7 @@ class WebcamManager: NSObject, ObservableObject {
                 videoOutput.setSampleBufferDelegate(nil, queue: nil)
                 if session.canAddOutput(videoOutput) {
                     session.addOutput(videoOutput)
+                    self.videoOutput = videoOutput
                 }
                 session.commitConfiguration()
                 
@@ -197,6 +203,37 @@ class WebcamManager: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - Stills
+
+    /// The next frame from the running session, or nil.
+    ///
+    /// A delegate is attached only for the length of this call and detached the moment a frame
+    /// arrives. That is the whole point: the session is otherwise built with a nil delegate, so
+    /// the mirror costs nothing per frame at rest, and a still costs one frame's work. Holding
+    /// the newest frame permanently would mean decoding and retaining 30 frames a second for a
+    /// button nobody may press.
+    ///
+    /// Bounded rather than trusting: a session that is running but starved (device grabbed by
+    /// another app mid-call) would otherwise leave the continuation suspended forever and the
+    /// shutter stuck.
+    func nextFrame(timeout: TimeInterval = 1.0) async -> CGImage? {
+        guard isSessionRunning, let output = videoOutput else { return nil }
+
+        return await withCheckedContinuation { continuation in
+            let grabber = FrameGrabber { [weak self] image in
+                output.setSampleBufferDelegate(nil, queue: nil)
+                self?.frameGrabber = nil
+                continuation.resume(returning: image)
+            }
+            frameGrabber = grabber
+            output.setSampleBufferDelegate(grabber, queue: frameQueue)
+
+            frameQueue.asyncAfter(deadline: .now() + timeout) {
+                grabber.expire()
+            }
+        }
+    }
+
     private func cleanupExistingSession() {
         guard let existingSession = captureSession else { return }
         if existingSession.isRunning {
@@ -268,5 +305,46 @@ class WebcamManager: NSObject, ObservableObject {
             self.cleanupExistingSession()
             NSLog("Capture session stopped and cleaned up")
         }
+    }
+}
+
+/// Delivers exactly one frame to its handler and then nothing, however many arrive.
+///
+/// The once-only flag is not defensiveness: `AVCaptureVideoDataOutput` keeps delivering on its
+/// queue until the delegate is detached, and detaching happens in the handler — so a second
+/// frame can already be in flight. Resuming a continuation twice traps.
+private final class FrameGrabber: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+    private let handler: (CGImage?) -> Void
+    private let lock = NSLock()
+    private var delivered = false
+    private let context = CIContext(options: [.useSoftwareRenderer: false])
+
+    init(handler: @escaping (CGImage?) -> Void) {
+        self.handler = handler
+        super.init()
+    }
+
+    /// The timeout path: reports failure if no frame ever came.
+    func expire() {
+        deliver(nil)
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
+        deliver(context.createCGImage(image, from: image.extent))
+    }
+
+    private func deliver(_ image: CGImage?) {
+        lock.lock()
+        let alreadyDelivered = delivered
+        delivered = true
+        lock.unlock()
+        guard !alreadyDelivered else { return }
+        handler(image)
     }
 }
