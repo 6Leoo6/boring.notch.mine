@@ -2,196 +2,113 @@
   <br>
   <a href="http://theboring.name"><img src="https://framerusercontent.com/images/RFK4vs0kn8pRMuOO58JeyoemXA.png?scale-down-to=256" alt="Boring Notch" width="150"></a>
   <br>
-  Boring Notch
+  Boring Notch (personal fork)
   <br>
 </h1>
 
-
-<p align="center">
-  <a title="Crowdin" target="_blank" href="https://crowdin.com/project/boring-notch"><img src="https://badges.crowdin.net/boring-notch/localized.svg"></a>
-  <img src="https://github.com/TheBoredTeam/boring.notch/actions/workflows/cicd.yml/badge.svg" alt="TheBoringNotch Build & Test" style="margin-right: 10px;" />
-  <a href="https://discord.gg/c8JXA7qrPm">
-    <img src="https://dcbadge.limes.pink/api/server/https://discord.gg/c8JXA7qrPm?style=flat" alt="Discord Badge" />
-  </a>
-  <a href="https://www.ko-fi.com/alexander5015">
-    <img src="https://srv-cdn.himpfen.io/badges/kofi/kofi-flat.svg" alt="Ko-Fi" />
-  </a>
-</p>
-
-<!--Welcome to **Boring.Notch**, the coolest way to make your MacBook's notch the star of the show! Forget about those boring status bars—our notch turns into a dynamic music control center, complete with a snazzy visualizer and all the music controls you need. It's like having a mini concert right at the top of your screen! -->
-
-Say hello to **Boring Notch**, the coolest way to make your MacBook’s notch the star of the show! Say goodbye to boring status bars: with Boring Notch, your notch transforms into a dynamic music control center, complete with a vibrant visualizer and all the essential music controls you need. But that’s just the start! Boring Notch also offers calendar integration, a handy file shelf with AirDrop support, a complete MacOS HUD replacement and more!
+A personal fork of [TheBoredTeam/boring.notch](https://github.com/TheBoredTeam/boring.notch) that turns the MacBook notch into a music, shelf and clipboard hub. It keeps all upstream features and adds clipboard history, screen capture, a flashlight, keep-awake, smarter tab routing and a local MCP server for AI agents.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/2d5f69c1-6e7b-4bc2-a6f1-bb9e27cf88a8" alt="Demo GIF" />
 </p>
 
-<!--https://github.com/user-attachments/assets/19b87973-4b3a-4853-b532-7e82d1d6b040-->
----
-<!--## Table of Contents
-- [Installation](#installation)
-- [Usage](#usage)
-- [Roadmap](#-roadmap)
-- [Building from Source](#building-from-source)
-- [Contributing](#-contributing)
-- [Join our Discord Server](#join-our-discord-server)
-- [Star History](#star-history)
-- [Buy us a coffee!](#buy-us-a-coffee)
-- [Acknowledgments](#-acknowledgments)-->
+## Features from upstream
 
-## Installation
+- Now playing controls and a live activity for Apple Music, Spotify, YouTube Music and any Now Playing source.
+- Audio visualizer, optionally tinted to the album art.
+- Calendar and Reminders integration.
+- Mirror that shows a webcam preview inside the notch.
+- Battery and charging indicator.
+- File shelf with AirDrop and share service support.
+- Replacements for the system volume, brightness and keyboard backlight HUDs.
+- Customizable gestures, notch sizing and multi-display support.
 
-**System Requirements:**
-- macOS **14 Sonoma** or later
-- Apple Silicon or Intel Mac
+## Added in this fork
 
----
+### Clipboard history
+- Keeps a history of copied text, images and files as a second panel in the Shelf tab.
+- Entries can be pinned, which exempts them from the age and count limits.
+- A full-size preview panel expands below the notch, and text entries can be edited in it and saved back to the history.
+- Retention days, maximum entries and delete confirmation are set in Settings > Clipboard.
+- Copies that password managers mark as concealed are never recorded.
+- `Shift-Cmd-C` opens the clipboard panel directly.
 
-### Option 1: Download and Install Manually
+### Screen capture
+- A camera button in the notch header takes a screenshot of a selected region.
+- A record button records a selected region and turns into a red timer you stop from the same spot.
+- Captures go to the clipboard by default, so they also appear in clipboard history. Saving to a folder is an option in Settings.
+- Capture runs in process through ScreenCaptureKit, because the sandboxed app cannot run `/usr/sbin/screencapture`.
 
-<a href="https://github.com/TheBoredTeam/boring.notch/releases/latest/download/boringNotch.dmg" target="_self"><img width="200" src="https://github.com/user-attachments/assets/e3179be1-8416-4b8a-b417-743e1ecc67d6" alt="Download for macOS" /></a>
+### Mirror shot and flashlight
+- A shutter button on the mirror copies a still framed the same way the mirror shows it (square crop, mirrored, rounded corners).
+- Space takes the shot while the pointer is over the mirror. It is not bound anywhere else.
+- A flashlight toggle on the mirror lights a warm pane on screen. Its size sets the brightness, and it can raise display brightness while active.
 
-Once downloaded, open the `.dmg` and move **Boring Notch** to your `/Applications` folder.
+### Keep awake
+- A header button prevents system sleep, with a selectable duration.
+- Optionally prevents display sleep too, and can restore its state on launch.
 
-> [!IMPORTANT]
-> We don't have an Apple Developer account (yet 👀), so macOS will warn you that Boring Notch is from an unidentified developer on first launch. This is expected behavior.
->
-> You'll need to bypass this before the app will open. You only need to do this once. Use one of the methods below.
+### Tab routing
+- When the notch opens, it picks the tab and shelf panel from recent activity: a drag in progress, a recent drop, ongoing shelf use or a recent copy.
+- Holding Command while hovering opens the clipboard, and holding Option opens the shelf. Both are remappable in Settings > Shelf.
+- Routing only runs on a real closed to open transition, so clicking an already open notch never changes the tab.
 
----
+### UI changes
+- Redesigned shelf and clipboard panels with a shared tile strip and a switcher set into the panel border.
+- Player tinting drives the slider, visualizer and active states from one setting.
+- A compact "now playing" peek drops below the closed notch on track change.
+- Compact fixed-width calendar, and calendar clicks open Calendar.app.
+- Battery indicator matched to the macOS menu bar original, including the charging and plugged-in glyphs.
+- Horizontal swipe cycles tabs.
 
-#### Recommended: Terminal (Always Works)
+### Agent bridge (MCP)
+- Lets local AI agents (Claude Code or any MCP client) use the shelf and clipboard history.
+- Off by default. Turn it on in Settings > Agents > Allow local agents.
+- The app listens only on `127.0.0.1` with a token that changes every launch. Port and token are written to `~/.config/boringnotch/agent-bridge.json` (mode 0600).
+- Clipboard entries from password managers or that look like API keys, tokens or private keys are listed without content. Right-click any entry to hide it from agents or allow it.
 
-This is the quickest and easiest method. It only requires a single command and works consistently for all users. System Settings can sometimes fail and won't work for non-admin users.
+| Tool | What it does |
+|---|---|
+| `shelf_list` | Lists shelf items with id, kind (file, text, link), name, size and original path. |
+| `shelf_pull` | Writes a file item to a path (folders arrive zipped), or returns text and links inline. |
+| `shelf_put` | Adds a file or folder (up to 64 MB), text or a link to the shelf. |
+| `clipboard_list` | Lists history filtered by type, time window, pinned or protected state, with paging. |
+| `clipboard_get` | Returns one entry in full. Images come inline or are saved to a path. |
+| `clipboard_add` | Adds text, an image file or file paths to the history, optionally pinned. |
 
-After moving Boring Notch to your Applications folder, run:
+The MCP server is a separate stdio helper in [`mcp-helper/`](mcp-helper/). It runs unsandboxed as the agent's child process and does all file I/O. Install it with:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/boringNotch.app
+mcp-helper/install.sh
 ```
 
-Then open the app normally.
+This builds the helper, installs it to `~/.local/bin/boringnotch-mcp` and registers it with Claude Code at user scope.
 
----
+## Building from source
 
-#### Alternative: System Settings
+This fork has no prebuilt releases. Upstream releases and the Homebrew cask install the original app without the features above.
 
-> [!NOTE]
-> This method doesn't work for all users. If this doesn't work, use the Terminal method above.
-
-1. Try to open the app — you'll see a security warning.
-2. Click **OK** to dismiss it.
-3. Open **System Settings** > **Privacy & Security**.
-4. Scroll to the bottom and click **Open Anyway** next to the Boring Notch warning.
-5. Confirm if prompted.
-
----
-
-### Option 2: Install via Homebrew
-
-You can also install using [Homebrew](https://brew.sh). The Homebrew installation automatically bypasses the macOS security warning described above.
+**Requirements:**
+- macOS 15.6 or later
+- Xcode 26 or later
 
 ```bash
-brew install --cask TheBoredTeam/boring-notch/boring-notch
+git clone https://github.com/6Leoo6/boring.notch.mine.git
+cd boring.notch.mine
+open boringNotch.xcodeproj
 ```
 
-## Usage
+- Set your own development team and bundle identifier in the target's Signing settings.
+- Build and run with `Cmd+R`.
+- The app has no Dock icon. It lives in the menu bar, and Settings open from there.
+- Quit any running instance before launching a new build (`pkill -x boringNotch`).
 
-- Launch the app, and voilà—your notch is now the coolest part of your screen.
-- Hover over the notch to see it expand and reveal all its secrets.
-- Use the controls to manage your music like a rockstar.
-- Click the star in your menu bar to customize your notch to your heart's content.
+## Credits
 
-## 📋 Roadmap
-- [x] Playback live activity 🎧
-- [x] Calendar integration 📆
-- [x] Reminders integration ☑️
-- [x] Mirror 📷
-- [x] Charging indicator and current percentage 🔋
-- [x] Customizable gesture control 👆🏻
-- [x] Shelf functionality with AirDrop 📚
-- [x] Notch sizing customization, finetuning on different display sizes 🖥️
-- [x] System HUD replacements (volume, brightness, backlight) 🎚️💡⌨️
-- [ ] Bluetooth Live Activity (connect/disconnect for bluetooth devices) 
-- [ ] Weather integration ⛅️
-- [ ] Customizable Layout options 🛠️
-- [ ] Lock Screen Widgets 🔒
-- [ ] Extension system 🧩
-- [ ] Notifications (under consideration) 🔔
-<!-- - [ ] Clipboard history manager 📌 `Extension` -->
-<!-- - [ ] Download indicator of different browsers (Safari, Chromium browsers, Firefox) 🌍 `Extension`-->
-<!-- - [ ] Customizable function buttons 🎛️ -->
-<!-- - [ ] App switcher 🪄 -->
+All base functionality comes from [TheBoredTeam/boring.notch](https://github.com/TheBoredTeam/boring.notch). Support the original project on [Ko-fi](https://www.ko-fi.com/alexander5015) or join its [Discord](https://discord.gg/GvYcYpAKTu).
 
-<!-- ## 🧩 Extensions
-> [!NOTE]
-> We’re hard at work on some awesome extensions! Stay tuned, and we’ll keep you updated as soon as they’re released. -->
+- **[MediaRemoteAdapter](https://github.com/ungive/mediaremote-adapter)**: provides the Now Playing source on macOS 15.4 and later.
+- **[NotchDrop](https://github.com/Lakr233/NotchDrop)**: the basis for the first version of the shelf.
+- Icon by [@maxtron95](https://github.com/maxtron95), website by [@himanshhhhuv](https://github.com/himanshhhhuv).
 
-## Building from Source
-
-### Prerequisites
-
-- **macOS 15.6 or later**
-- **Xcode 26 or later**
-
-### Installation
-
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/TheBoredTeam/boring.notch.git
-   cd boring.notch
-   ```
-
-2. **Open the Project in Xcode**:
-   ```bash
-   open boringNotch.xcodeproj
-   ```
-
-3. **Build and Run**:
-    - Click the "Run" button or press `Cmd + R`. Watch the magic unfold!
-
-## 🤝 Contributing
-
-We’re all about good vibes and awesome contributions! Read [CONTRIBUTING.md](CONTRIBUTING.md) to learn how you can join the fun!
-
-## Join our Discord Server
-
-<a href="https://discord.gg/GvYcYpAKTu" target="_blank"><img src="https://iili.io/28m3GHv.png" alt="Join The Boring Server!" style="height: 60px !important;width: 217px !important;" ></a>
-
-## Star History
-<!-- BROKEN: GitHub now restricts the stargazer API for privacy reasons
-<a href="https://www.star-history.com/#TheBoredTeam/boring.notch&Timeline">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=TheBoredTeam/boring.notch&type=Timeline&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=TheBoredTeam/boring.notch&type=Timeline" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=TheBoredTeam/boring.notch&type=Timeline" />
- </picture>
-</a>
--->
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TheBoredTeam/org-star-chart-updater/main/projects/boring.notch/chart-dark.svg">
-   <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/TheBoredTeam/org-star-chart-updater/main/projects/boring.notch/chart-light.svg">
-   <img src="https://raw.githubusercontent.com/TheBoredTeam/org-star-chart-updater/main/projects/boring.notch/chart-light.svg" alt="TheBoredTeam/boring.notch GitHub star history">
- </picture>
-
-## Support us on Ko-fi!
-<!-- <a href="https://www.buymeacoffee.com/jfxh67wvfxq" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-red.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a> -->
-<a href="https://www.ko-fi.com/alexander5015" target="_blank"><img src="https://github.com/user-attachments/assets//a76175ef-7e93-475a-8b67-4922ba5964c2" alt="Support us on Ko-fi" style="height: 70px !important;width: 346px !important;" ></a>
-
-## 🎉 Acknowledgments
-
-We would like to express our gratitude to the authors and maintainers of the open-source projects that made this possible. 
-
-## Notable Projects
-- **[MediaRemoteAdapter](https://github.com/ungive/mediaremote-adapter)** –  An open-source project that allowed us to use the Now Playing source in macOS 15.4+
-- **[NotchDrop](https://github.com/Lakr233/NotchDrop)** – An open-source project that has been instrumental in developing the first version of the "Shelf" feature in Boring Notch.
-
-For a full list of licenses and attributions, please see the [Third-Party Licenses](./THIRD_PARTY_LICENSES.md) file.
-
-### Icon credits: [@maxtron95](https://github.com/maxtron95)
-### Website credits: [@himanshhhhuv](https://github.com/himanshhhhuv)
-
-- **SwiftUI**: For making us look like coding wizards.
-- **You**: For being awesome and checking out **boring.notch**!
-
-
+For the full list of licenses and attributions, see [Third-Party Licenses](./THIRD_PARTY_LICENSES).
