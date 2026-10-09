@@ -130,12 +130,18 @@ class QuickShareService: ObservableObject {
             svc.delegate = delegate
             svc.perform(withItems: items)
         } else {
+            // The guard is raised only once the picker is actually going on screen. Raising it
+            // first and then skipping `show` left nothing that could ever lower it again.
+            guard let view else {
+                delegate.abandon()
+                lifecycleDelegate = nil
+                stopSharingAccessingURLs()
+                return
+            }
             let picker = NSSharingServicePicker(items: items)
             picker.delegate = delegate
             delegate.markPickerBegan()
-            if let view {
-                picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
-            }
+            picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
         }
     }
 

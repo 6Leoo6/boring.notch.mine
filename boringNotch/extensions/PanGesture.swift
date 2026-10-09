@@ -18,12 +18,58 @@ enum PanDirection {
     func signed(deltaX: CGFloat, deltaY: CGFloat) -> CGFloat { (isHorizontal ? deltaX : deltaY) * sign }
 }
 
+/// Regions that own scrolling along an axis outright, so a pan over them is never
+/// reinterpreted as a tab switch or an open/close gesture. Geometry alone is not enough: a
+/// list scrolled to its end, or one whose items happen to fit, reports no room to scroll
+/// while the user is plainly still scrolling it.
+@MainActor
+final class ScrollOwners {
+    static let shared = ScrollOwners()
+    private var regions: [UUID: Axis] = [:]
+
+    func owns(_ axis: Axis) -> Bool { regions.values.contains(axis) }
+
+    func setInside(_ inside: Bool, id: UUID, axis: Axis) {
+        if inside {
+            regions[id] = axis
+        } else {
+            regions[id] = nil
+        }
+    }
+
+    func forget(_ id: UUID) {
+        regions[id] = nil
+    }
+}
+
+private struct ScrollOwnerModifier: ViewModifier {
+    let axis: Axis
+    @State private var id = UUID()
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { ScrollOwners.shared.setInside($0, id: id, axis: axis) }
+            .onDisappear { ScrollOwners.shared.forget(id) }
+            // The panel can switch axis under a stationary cursor when it expands into a grid
+            .onChange(of: axis) { _, newAxis in
+                ScrollOwners.shared.setInside(true, id: id, axis: newAxis)
+            }
+    }
+}
+
 extension View {
+    /// Marks a scrolling region that owns its gestures outright: while the pointer is inside
+    /// it, pan gestures along `axis` are suppressed. The other axis is unaffected.
+    func ownsScrolling(axis: Axis) -> some View {
+        modifier(ScrollOwnerModifier(axis: axis))
+    }
+
     func panGesture(direction: PanDirection, threshold: CGFloat = 4, action: @escaping (CGFloat, NSEvent.Phase) -> Void) -> some View {
         self
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
+                        guard !ScrollOwners.shared.owns(direction.isHorizontal ? .horizontal : .vertical) else { return }
                         let s = direction.signed(from: value.translation)
                         guard s > 0, s.magnitude >= threshold else { return }
                         action(s.magnitude, .changed)
@@ -126,14 +172,14 @@ private struct ScrollMonitor: NSViewRepresentable {
             // never re-trigger an intent gesture.
             guard event.momentumPhase.isEmpty else { return }
 
-            // A horizontal swipe that starts over a nested horizontal scroll view (the
-            // clipboard strip) belongs to that scroll view, not to us. Re-evaluate only
-            // while the gesture is still forming; once it has been claimed either way the
-            // latch holds until the gesture ends, so drifting off the strip mid-scroll
-            // cannot hand the rest of the swipe back to the tab switcher.
+            // A scroll that starts inside an excluded region, or over a nested horizontal
+            // scroll view, belongs to that list and not to us. Re-evaluate only while the
+            // gesture is still forming; once it has been claimed either way the latch holds
+            // until the gesture ends, so drifting off the strip mid-scroll cannot hand the
+            // rest of the swipe back to the tab switcher.
             if !active {
-                claimedByNestedScroll = direction.isHorizontal
-                    && Self.isOverHorizontalScrollView(event, in: view)
+                claimedByNestedScroll = ScrollOwners.shared.owns(direction.isHorizontal ? .horizontal : .vertical)
+                    || (direction.isHorizontal && Self.isOverHorizontalScrollView(event, in: view))
             }
             guard !claimedByNestedScroll else { return }
 

@@ -84,6 +84,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             screenUnlockedObserver = nil
         }
         MusicManager.shared.destroy()
+        // The kernel already reclaims the power assertion when this process exits; this is
+        // the explicit release for the ordinary quit path. applicationWillTerminate always
+        // runs on the main thread, which is what assumeIsolated asserts here.
+        MainActor.assumeIsolated {
+            SleepManager.shared.releaseForTermination()
+        }
         cleanupDragDetectors()
         cleanupWindows()
         XPCHelperClient.shared.stopMonitoringAccessibilityAuthorization()
@@ -226,9 +232,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if Defaults[.showOnAllDisplays], let viewModel = viewModels[uuid] {
             viewModel.open()
             coordinator.currentView = .shelf
+            TabRoutingManager.shared.prepareForDrop()
         } else if !Defaults[.showOnAllDisplays], let windowScreen = window?.screen, screen == windowScreen {
             vm.open()
             coordinator.currentView = .shelf
+            TabRoutingManager.shared.prepareForDrop()
         }
     }
 
@@ -266,16 +274,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private func setClipboardPreviewExpansion(_ expand: Bool) {
+    /// Lets the notch panel take key status while the user is editing text in it, so a
+    /// text field can become first responder and receive keystrokes.
+    private func setNotchTextEditing(_ editing: Bool) {
+        let affected: [NSWindow] = Defaults[.showOnAllDisplays]
+            ? Array(windows.values)
+            : [window].compactMap { $0 }
+        for case let panel as BoringNotchSkyLightWindow in affected {
+            panel.allowsKeyWindow = editing
+        }
+    }
+
+    /// Sizes the notch windows for whatever is expanded below the tabs — the clipboard
+    /// preview or the shelf grid. One resize path, so the two can never fight each other.
+    private func setIslandExpansion(_ extraHeight: CGFloat) {
         shrinkWindowTask?.cancel()
         shrinkWindowTask = nil
 
-        let targetHeight = windowSize.height + (expand ? clipboardPreviewHeight : 0)
+        let targetHeight = windowSize.height + max(0, extraHeight)
         let affectedWindows: [NSWindow] = Defaults[.showOnAllDisplays]
             ? Array(windows.values)
             : [window].compactMap { $0 }
 
-        if expand {
+        guard affectedWindows.contains(where: { $0.frame.height != targetHeight }) else { return }
+        // Growing has to happen before the island animates into the space; shrinking has to
+        // wait until it has animated out of it.
+        let isGrowing = affectedWindows.contains { $0.frame.height < targetHeight }
+
+        if isGrowing {
             // Grow the window immediately so SwiftUI's spring has room to animate freely
             for w in affectedWindows {
                 guard let screen = w.screen else { continue }
@@ -372,12 +398,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         NotificationCenter.default.addObserver(
+            forName: Notification.Name.notchTextEditingChanged, object: nil, queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor in
+                guard let self else { return }
+                let editing = notification.userInfo?["editing"] as? Bool ?? false
+                self.setNotchTextEditing(editing)
+            }
+        }
+
+        NotificationCenter.default.addObserver(
             forName: Notification.Name.clipboardPreviewExpandChanged, object: nil, queue: .main
         ) { [weak self] notification in
             Task { @MainActor in
                 guard let self else { return }
-                let expand = notification.userInfo?["expand"] as? Bool ?? false
-                self.setClipboardPreviewExpansion(expand)
+                let extra = notification.userInfo?["extraHeight"] as? CGFloat ?? 0
+                self.setIslandExpansion(extra)
             }
         }
 
@@ -397,6 +433,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.onScreenUnlocked(notification)
                 }
         }
+
+        KeyboardShortcuts.onKeyDown(for: .mirrorShot) {
+            Task { @MainActor in
+                MirrorShotManager.shared.takeShot()
+            }
+        }
+        // AFTER the handler, never before, and this order is the whole bug it fixes:
+        // `onKeyDown(for:)` calls `registerShortcutIfNeeded` internally, so it BINDS the
+        // hotkey as a side effect of adding a listener. Releasing first and registering second
+        // left a bare Space bound globally from launch — every space in every app taken by the
+        // mirror instead of typed. It is bound again only while the mirror is in use; see
+        // `MirrorShotManager.armSpace`.
+        KeyboardShortcuts.disable(.mirrorShot)
 
         KeyboardShortcuts.onKeyDown(for: .toggleSneakPeek) { [weak self] in
             guard let self = self else { return }
@@ -466,6 +515,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         ClipboardManager.shared.start()
         ClipboardManager.shared.enforceLimits()
+        AgentBridgeServer.shared.startIfEnabled()
+        // Drag staging from previous launches is unreachable: the store keys it in memory, so
+        // nothing that survived a quit was ever going to be cleaned up.
+        ClipboardDragFileStore.shared.sweepOrphanedStaging(
+            keeping: Set(ClipboardManager.shared.items.map(\.id))
+        )
+
+        Task { @MainActor in
+            SleepManager.shared.restoreOnLaunch()
+            FlashlightManager.shared.restoreOnLaunch()
+        }
 
         if coordinator.firstLaunch {
             DispatchQueue.main.async {
@@ -649,6 +709,7 @@ extension Notification.Name {
     static let automaticallySwitchDisplayChanged = Notification.Name("automaticallySwitchDisplayChanged")
     static let expandedDragDetectionChanged = Notification.Name("expandedDragDetectionChanged")
     static let clipboardPreviewExpandChanged = Notification.Name("clipboardPreviewExpandChanged")
+    static let notchTextEditingChanged = Notification.Name("notchTextEditingChanged")
 }
 
 extension CGRect: @retroactive Hashable {

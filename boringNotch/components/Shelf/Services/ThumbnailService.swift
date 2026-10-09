@@ -13,16 +13,28 @@ import UniformTypeIdentifiers
 actor ThumbnailService {
     static let shared = ThumbnailService()
 
-    private var cache: [String: NSImage] = [:]
+    /// `NSCache` rather than a dictionary so a hit can also be read synchronously from
+    /// outside the actor — a view re-created by a tab switch would otherwise have to await
+    /// an actor hop and would flash its generic icon for a frame first.
+    private static let cache = NSCache<NSString, NSImage>()
     private var pendingRequests: [String: Task<NSImage?, Never>] = [:]
     private let thumbnailGenerator = QLThumbnailGenerator.shared
 
     private init() {}
-    
+
+    private static func cacheKey(for url: URL, size: CGSize) -> NSString {
+        "\(url.path)_\(size.width)x\(size.height)" as NSString
+    }
+
+    /// Already-generated thumbnail, without awaiting the actor.
+    nonisolated static func cached(for url: URL, size: CGSize) -> NSImage? {
+        cache.object(forKey: cacheKey(for: url, size: size))
+    }
+
     func thumbnail(for url: URL, size: CGSize) async -> NSImage? {
-        let cacheKey = "\(url.path)_\(size.width)x\(size.height)"
-        
-        if let cached = cache[cacheKey] {
+        let cacheKey = Self.cacheKey(for: url, size: size) as String
+
+        if let cached = Self.cached(for: url, size: size) {
             return cached
         }
         
@@ -33,7 +45,7 @@ actor ThumbnailService {
         let task = Task<NSImage?, Never> {
             let thumbnail = await generateQuickLookThumbnail(for: url, size: size)
             if let thumbnail = thumbnail {
-                cache[cacheKey] = thumbnail
+                Self.cache.setObject(thumbnail, forKey: cacheKey as NSString)
             }
             pendingRequests[cacheKey] = nil
             return thumbnail
@@ -44,11 +56,13 @@ actor ThumbnailService {
     }
     
     func clearCache() {
-        cache.removeAll()
+        Self.cache.removeAllObjects()
     }
-    
+
+    /// `NSCache` cannot enumerate its keys, so a single-URL eviction has to drop everything.
+    /// Thumbnails regenerate on demand, so this stays correct — only colder.
     func clearCache(for url: URL) {
-        cache = cache.filter { !$0.key.starts(with: url.path) }
+        Self.cache.removeAllObjects()
     }
     
     // MARK: - Private Methods

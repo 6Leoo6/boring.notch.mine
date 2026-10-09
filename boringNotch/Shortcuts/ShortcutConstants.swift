@@ -15,4 +15,8 @@ extension KeyboardShortcuts.Name {
     static let increaseBacklight = Self("increaseBacklight", default: .init(.f2, modifiers: [.command]))
     static let toggleSneakPeek = Self("toggleSneakPeek", default: .init(.h, modifiers: [.command, .shift]))
     static let toggleNotchOpen = Self("toggleNotchOpen", default: .init(.i, modifiers: [.command, .shift]))
+    /// Modifier-less on purpose, and it is only BOUND while the pointer is over the mirror —
+    /// see `MirrorShotManager.armSpace`. A bare Space bound permanently would swallow the
+    /// spacebar system-wide.
+    static let mirrorShot = Self("mirrorShot", default: .init(.space))
 }

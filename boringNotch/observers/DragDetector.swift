@@ -28,6 +28,11 @@ final class DragDetector {
     private var isDragging: Bool = false
     private var isContentDragging: Bool = false
     private var hasEnteredNotchRegion: Bool = false
+    /// A drag that BEGINS inside the notch is the user dragging something OUT of it — a shelf
+    /// or clipboard tile. It is never a drop arriving into the notch, so the region-entry
+    /// callback must stay silent for its whole life: firing it routes the panel to the shelf
+    /// under the user's own cursor, mid-drag.
+    private var dragStartedInsideNotch: Bool = false
 
     private let notchRegion: CGRect
     private let dragPasteboard = NSPasteboard(name: .drag)
@@ -58,6 +63,7 @@ final class DragDetector {
             self.isDragging = true
             self.isContentDragging = false
             self.hasEnteredNotchRegion = false
+            self.dragStartedInsideNotch = self.notchRegion.contains(NSEvent.mouseLocation)
         }
 
         // Track drag movement and notch region intersection
@@ -78,6 +84,7 @@ final class DragDetector {
                 self.onDragMove?(mouseLocation)
                 
                 // Track notch region entry/exit
+                guard !self.dragStartedInsideNotch else { return }
                 let containsMouse = self.notchRegion.contains(mouseLocation)
                 if containsMouse && !self.hasEnteredNotchRegion {
                     self.hasEnteredNotchRegion = true
@@ -96,6 +103,7 @@ final class DragDetector {
             self.isDragging = false
             self.isContentDragging = false
             self.hasEnteredNotchRegion = false
+            self.dragStartedInsideNotch = false
             self.pasteboardChangeCount = -1
         }
     }
@@ -112,6 +120,7 @@ final class DragDetector {
         isDragging = false
         isContentDragging = false
         hasEnteredNotchRegion = false
+        dragStartedInsideNotch = false
     }
 
     deinit {

@@ -21,6 +21,40 @@ struct EmptyStateView: View {
     }
 }
 
+/// The shared "nothing here yet" state for the notch's shelf and clipboard panels, so the
+/// two differ only in their icon and wording.
+struct NotchEmptyState: View {
+    let icon: String
+    let message: LocalizedStringKey
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon)
+                .symbolVariant(.fill)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.white, .gray)
+                .imageScale(.large)
+
+            Text(message)
+                .foregroundStyle(.gray)
+                .font(.system(.title3, design: .rounded))
+                .fontWeight(.medium)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .transition(.blurReplace.animation(.spring(.bouncy(duration: 0.3))))
+    }
+}
+
 #Preview {
     EmptyStateView(message: "Play some music babies")
+}
+
+#Preview("Notch panels") {
+    HStack(spacing: 0) {
+        NotchEmptyState(icon: "tray.and.arrow.down", message: "Drop files here")
+        NotchEmptyState(icon: "clipboard", message: "Nothing copied yet")
+    }
+    .frame(width: 440, height: 90)
+    .background(Color.black)
+    .preferredColorScheme(.dark)
 }

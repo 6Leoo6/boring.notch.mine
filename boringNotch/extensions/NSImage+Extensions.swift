@@ -156,8 +156,48 @@ extension Color {
     /// `avgColor` defaults to white when no artwork is loaded, so near-white input falls
     /// back instead of being dimmed into an arbitrary grey.
     static func playerTint(from color: NSColor, fallback: Color, factor: CGFloat = 0.6) -> Color {
-        guard let luminance = color.srgbLuminance, luminance < 0.9 else { return fallback }
+        guard let luminance = color.srgbLuminance,
+              luminance > 0.01, luminance < 0.9 else { return fallback }
         return Color(nsColor: color).ensureMinimumBrightness(factor: factor)
+    }
+
+    /// Activated counterpart to `playerTint`, for controls in their "on" state.
+    /// `playerTint` normalises to `factor` luminance, so the inactive icon never
+    /// exceeds it; driving this one to `targetLuminance` guarantees a fixed
+    /// contrast step no matter what the artwork is. Saturation is boosted first,
+    /// then the colour is blended toward white by exactly the amount needed to
+    /// reach that target — a fully saturated hue like pure red is already at its
+    /// brightness ceiling and cannot get there on hue alone.
+    /// Artwork with no usable hue — near-white, near-black or greyscale — has no
+    /// stronger version to derive, so those fall back alongside `playerTint`.
+    static func playerAccent(
+        from color: NSColor,
+        fallback: Color,
+        minimumSaturation: CGFloat = 0.12,
+        targetLuminance: CGFloat = 0.85
+    ) -> Color {
+        guard let base = color.usingColorSpace(.sRGB),
+              let luminance = color.srgbLuminance,
+              luminance > 0.01, luminance < 0.9,
+              base.saturationComponent >= minimumSaturation,
+              let vivid = NSColor(
+                  hue: base.hueComponent,
+                  saturation: max(base.saturationComponent, 0.85),
+                  brightness: 1,
+                  alpha: 1
+              ).usingColorSpace(.sRGB),
+              let vividLuminance = vivid.srgbLuminance
+        else { return fallback }
+
+        let lift = vividLuminance >= targetLuminance
+            ? 0
+            : (targetLuminance - vividLuminance) / (1 - vividLuminance)
+
+        return Color(
+            red: Double(vivid.redComponent + (1 - vivid.redComponent) * lift),
+            green: Double(vivid.greenComponent + (1 - vivid.greenComponent) * lift),
+            blue: Double(vivid.blueComponent + (1 - vivid.blueComponent) * lift)
+        )
     }
 }
 
@@ -184,6 +224,8 @@ extension Color {
         // Calculate perceived brightness using the formula: (0.299*R + 0.587*G + 0.114*B)
         let perceivedBrightness = (0.2126 * red + 0.7152 * green + 0.0722 * blue)
         
+        guard perceivedBrightness > 0 else { return self }
+
         let scale = factor / perceivedBrightness
         red = min(red * scale, 1.0)
         green = min(green * scale, 1.0)

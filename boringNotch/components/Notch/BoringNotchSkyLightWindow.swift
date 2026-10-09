@@ -109,6 +109,21 @@ class BoringNotchSkyLightWindow: NSPanel {
     
     private var observers: Set<AnyCancellable> = []
     
-    override var canBecomeKey: Bool { false }
+    /// The panel refuses key status so it never steals focus from whatever the user is
+    /// working in. Text editing inside the notch needs a first responder, so key status is
+    /// granted for the duration of an edit and withdrawn afterwards. The `.nonactivatingPanel`
+    /// style means taking it does not activate the app, so the frontmost app stays frontmost.
+    var allowsKeyWindow: Bool = false {
+        didSet {
+            guard allowsKeyWindow != oldValue else { return }
+            if allowsKeyWindow {
+                makeKey()
+            } else if isKeyWindow {
+                resignKey()
+            }
+        }
+    }
+
+    override var canBecomeKey: Bool { allowsKeyWindow }
     override var canBecomeMain: Bool { false }
 }

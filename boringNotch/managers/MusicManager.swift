@@ -557,9 +557,7 @@ class MusicManager: ObservableObject {
         workItem?.cancel()
         withAnimation(.smooth) {
             self.albumArt = newAlbumArt
-            if Defaults[.coloredSpectrogram] {
-                self.calculateAverageColor()
-            }
+            self.calculateAverageColor()
         }
     }
 

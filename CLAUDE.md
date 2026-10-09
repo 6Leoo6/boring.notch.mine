@@ -113,6 +113,12 @@ mediaremote-adapter/              # Perl script for media remote bridging
 
 > Add notes here as you modify the app for personal use.
 
+### Agent bridge (local MCP)
+- The app serves `POST /rpc` on `127.0.0.1:<random port>` (`managers/AgentBridgeServer.swift`, ops in `AgentBridgeRouter.swift`) when `Defaults[.agentBridgeEnabled]` is on. Port + per-launch token go to `~/.config/boringnotch/agent-bridge.json` (0600), allowed by a home-relative sandbox exception in the entitlements.
+- MCP itself lives in `mcp-helper/` (SwiftPM, no dependencies). It runs unsandboxed as the agent's child and does all file I/O, because the sandboxed app cannot read or write agent-named paths. Rebuild and reinstall with `mcp-helper/install.sh`.
+- Protection: `ClipboardEntry.protectionOverride` (nil = auto) + `ClipboardProtection` (password-manager bundle IDs, secret regexes), with auto-detection controlled by `Defaults[.clipboardAutoProtectSecrets]`. Protected entries are listed without content.
+- To enable a Bool key for one launch without writing the sandboxed prefs: `open -a boringNotch.app --args -<key> '<true/>'` (a bare `YES` arrives as a String and Defaults ignores it).
+
 <!-- Example:
 - Disabled the volume HUD (changed `showVolumeHUD` default to false in Constants.swift)
 - Increased default notch open animation speed

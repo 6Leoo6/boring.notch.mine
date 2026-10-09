@@ -15,11 +15,14 @@ import SwiftUI
 struct MusicPlayerView: View {
     @EnvironmentObject var vm: BoringViewModel
     let albumArtNamespace: Namespace.ID
+    /// Handed down rather than re-derived so the toolbar reflows in the same transaction that
+    /// grows the mirror, instead of a runloop turn ahead of it on its own spring.
+    var mirrorOpen: Bool = false
 
     var body: some View {
         HStack {
             AlbumArtView(vm: vm, albumArtNamespace: albumArtNamespace).padding(.all, 5)
-            MusicControlsView().drawingGroup().compositingGroup()
+            MusicControlsView(mirrorOpen: mirrorOpen).drawingGroup().compositingGroup()
         }
     }
 }
@@ -110,9 +113,9 @@ struct AlbumArtView: View {
 }
 
 struct MusicControlsView: View {
+    var mirrorOpen: Bool = false
     @ObservedObject var musicManager = MusicManager.shared
-        @EnvironmentObject var vm: BoringViewModel
-        @ObservedObject var webcamManager = WebcamManager.shared
+    @Default(.showCalendar) private var showCalendar
     @State private var sliderValue: Double = 0
     @State private var dragging: Bool = false
     @State private var lastDragged: Date = .distantPast
@@ -121,10 +124,16 @@ struct MusicControlsView: View {
     @Default(.playerColorTinting) private var playerColorTinting
 
     private static let fallbackWhite = Color.white
+    private static let fallbackActive = Color.red
 
     private var musicTint: Color {
         guard playerColorTinting else { return Self.fallbackWhite }
         return .playerTint(from: musicManager.avgColor, fallback: Self.fallbackWhite)
+    }
+
+    private var musicAccent: Color {
+        guard playerColorTinting else { return Self.fallbackActive }
+        return .playerAccent(from: musicManager.avgColor, fallback: Self.fallbackActive)
     }
 
     var body: some View {
@@ -155,9 +164,8 @@ struct MusicControlsView: View {
                 $musicManager.artistName,
                 font: .headline,
                 nsFont: .headline,
-                textColor: Defaults[.playerColorTinting]
-                    ? Color(nsColor: musicManager.avgColor)
-                        .ensureMinimumBrightness(factor: 0.6) : .gray,
+                textColor: playerColorTinting
+                    ? .playerTint(from: musicManager.avgColor, fallback: .gray) : .gray,
                 frameWidth: width
             )
             .fontWeight(.medium)
@@ -218,26 +226,41 @@ struct MusicControlsView: View {
         }
     }
 
+    /// Identified by position in the FULL slot list, so dropping the edges removes ids 0 and
+    /// n-1 outright. Keying on the filtered offset instead would renumber the survivors and
+    /// SwiftUI would cross-fade one icon into another rather than retiring the edges.
+    private struct SlotEntry: Identifiable {
+        let id: Int
+        let slot: MusicControlButton
+    }
+
     private var slotToolbar: some View {
-        let slots = activeSlots
-        return HStack(spacing: 6) {
-            ForEach(Array(slots.enumerated()), id: \.offset) { index, slot in
-                slotView(for: slot)
-                    .frame(alignment: .center)
+        HStack(spacing: 6) {
+            ForEach(activeSlots) { entry in
+                slotView(for: entry.slot)
+                    .transition(.scale.combined(with: .opacity))
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
+        // Shares the mirror's curve so the edge slots retire as part of the same motion
+        // instead of popping out from under it.
+        .animation(NotchHomeView.mirrorSpring, value: shouldHideEdges)
     }
 
-    private var activeSlots: [MusicControlButton] {
+    // If calendar and camera are both visible alongside music, hide the edge slots
+    private var shouldHideEdges: Bool {
+        mirrorOpen && showCalendar
+    }
+
+    private var activeSlots: [SlotEntry] {
         let sanitizedLimit = min(
             max(slotLimit, MusicControlButton.minSlotCount),
             MusicControlButton.maxSlotCount
         )
         let padded = slotConfig.padded(to: sanitizedLimit, filler: .none)
-        let result = Array(padded.prefix(sanitizedLimit))
-        // If calendar and camera are both visible alongside music, hide the edge slots
-        let shouldHideEdges = Defaults[.showCalendar] && Defaults[.showMirror] && webcamManager.cameraAvailable && vm.isCameraExpanded
+        let result = padded.prefix(sanitizedLimit).enumerated().map {
+            SlotEntry(id: $0.offset, slot: $0.element)
+        }
         if shouldHideEdges && result.count >= 5 {
             return Array(result.dropFirst().dropLast())
         }
@@ -249,7 +272,7 @@ struct MusicControlsView: View {
     private func slotView(for slot: MusicControlButton) -> some View {
         switch slot {
         case .shuffle:
-            HoverButton(icon: "shuffle", iconColor: musicManager.isShuffled ? .red : .primary, scale: .medium) {
+            HoverButton(icon: "shuffle", iconColor: musicManager.isShuffled ? musicAccent : musicTint, scale: .medium) {
                 MusicManager.shared.toggleShuffle()
             }
         case .previous:
@@ -269,15 +292,15 @@ struct MusicControlsView: View {
                 MusicManager.shared.toggleRepeat()
             }
         case .volume:
-            VolumeControlView()
+            VolumeControlView(tint: musicTint)
         case .favorite:
-            FavoriteControlButton()
+            FavoriteControlButton(tint: musicTint, activeTint: musicAccent)
         case .goBackward:
-            HoverButton(icon: "gobackward.15", scale: .medium) {
+            HoverButton(icon: "gobackward.15", iconColor: musicTint, scale: .medium) {
                 MusicManager.shared.skip(seconds: -15)
             }
         case .goForward:
-            HoverButton(icon: "goforward.15", scale: .medium) {
+            HoverButton(icon: "goforward.15", iconColor: musicTint, scale: .medium) {
                 MusicManager.shared.skip(seconds: 15)
             }
         case .none:
@@ -299,30 +322,45 @@ struct MusicControlsView: View {
     private var repeatIconColor: Color {
         switch musicManager.repeatMode {
         case .off:
-            return .primary
+            return musicTint
         case .all, .one:
-            return .red
+            return musicAccent
         }
     }
 }
 
 struct FavoriteControlButton: View {
     @ObservedObject var musicManager = MusicManager.shared
+    var tint: Color = .primary
+    var activeTint: Color = .red
+
+    private static let unsupportedOpacity: Double = 0.35
 
     var body: some View {
         HoverButton(icon: iconName, iconColor: iconColor, scale: .medium) {
             MusicManager.shared.toggleFavoriteTrack()
         }
         .disabled(!musicManager.canFavoriteTrack)
-        .opacity(musicManager.canFavoriteTrack ? 1 : 0.35)
+        .opacity(musicManager.canFavoriteTrack ? 1 : Self.unsupportedOpacity)
+        .help(helpText)
     }
 
     private var iconName: String {
         musicManager.isFavoriteTrack ? "heart.fill" : "heart"
     }
 
+    // Steps outside the album-art palette entirely, so "unsupported" cannot be read
+    // as either the tinted-inactive or the accent-active state.
     private var iconColor: Color {
-        musicManager.isFavoriteTrack ? .red : .primary
+        guard musicManager.canFavoriteTrack else { return .gray }
+        return musicManager.isFavoriteTrack ? activeTint : tint
+    }
+
+    private var helpText: String {
+        guard musicManager.canFavoriteTrack else {
+            return "The current media player doesn't support liking tracks"
+        }
+        return musicManager.isFavoriteTrack ? "Remove from favorites" : "Add to favorites"
     }
 }
 
@@ -337,6 +375,7 @@ private extension Array where Element == MusicControlButton {
 
 struct VolumeControlView: View {
     @ObservedObject var musicManager = MusicManager.shared
+    var tint: Color = .white
     @State private var volumeSliderValue: Double = 0.5
     @State private var dragging: Bool = false
     @State private var showVolumeSlider: Bool = false
@@ -354,7 +393,7 @@ struct VolumeControlView: View {
             }) {
                 Image(systemName: volumeIcon)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(musicManager.volumeControlSupported ? .white : .gray)
+                    .foregroundColor(musicManager.volumeControlSupported ? tint : .gray)
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(!musicManager.volumeControlSupported)
@@ -431,7 +470,29 @@ struct NotchHomeView: View {
     @ObservedObject var webcamManager = WebcamManager.shared
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = BoringViewCoordinator.shared
+    @ObservedObject var flashlight = FlashlightManager.shared
+    @ObservedObject private var mirrorShot = MirrorShotManager.shared
     let albumArtNamespace: Namespace.ID
+
+    // Read through the wrapper, not `Defaults[...]`: a bare subscript registers no SwiftUI
+    // dependency, so toggling either of these in Settings left the row waiting for some
+    // unrelated publisher to invalidate it before it noticed — which is a pop-in, not a push.
+    @Default(.showMirror) private var showMirror
+    @Default(.showCalendar) private var showCalendar
+    @Default(.mirrorShotEnabled) private var mirrorShotEnabled
+    // The shot has to be framed the way the mirror is framed, and both of these change that
+    // framing — so the view must invalidate when they do, not read them once.
+    @Default(.mirrorShape) private var mirrorShape
+    @Default(.cornerRadiusScaling) private var cornerRadiusScaling
+
+    @State private var mirrorMounted = false
+    @State private var mirrorOpen = false
+    @State private var rowHeight: CGFloat = 0
+    /// A measurement that landed while the spring was in flight, applied once it settles.
+    @State private var deferredRowHeight: CGFloat = 0
+    @State private var mirrorInFlight = false
+    @State private var mirrorHovering = false
+    @State private var mirrorUnmountTask: Task<Void, Never>?
 
     var body: some View {
         Group {
@@ -439,38 +500,326 @@ struct NotchHomeView: View {
                 mainContent
             }
         }
-        // simplified: use a straightforward opacity transition
-        .transition(.opacity)
     }
+
+    static let mirrorSpring = Animation.interactiveSpring(response: 0.34, dampingFraction: 0.78, blendDuration: 0)
+    /// Long enough for the spring above to have visually settled before the slot unmounts.
+    private static let mirrorCollapse: Duration = .milliseconds(460)
 
     private var shouldShowCamera: Bool {
-        Defaults[.showMirror] && webcamManager.cameraAvailable && vm.isCameraExpanded
+        showMirror && webcamManager.cameraAvailable && vm.isCameraExpanded
     }
 
+    private var widgetGap: CGFloat { (mirrorOpen && showCalendar) ? 10 : 15 }
+
+    private var mirrorSide: CGFloat { rowHeight > 0 ? rowHeight : 120 }
+
     private var mainContent: some View {
-        HStack(alignment: .top, spacing: (shouldShowCamera && Defaults[.showCalendar]) ? 10 : 15) {
-            MusicPlayerView(albumArtNamespace: albumArtNamespace)
+        // Spacing sits on the children rather than on the HStack: a mounted-but-collapsed
+        // mirror would still be given a gap of its own and would shift its neighbours while
+        // it is supposed to be closed.
+        HStack(alignment: .top, spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
+                MusicPlayerView(albumArtNamespace: albumArtNamespace, mirrorOpen: mirrorOpen)
 
-            if Defaults[.showCalendar] {
-                CalendarView()
-                    .frame(width: 155)
-                    .onHover { isHovering in
-                        vm.isHoveringCalendar = isHovering
-                    }
-                    .environmentObject(vm)
-                    .transition(.opacity)
+                if showCalendar {
+                    CalendarView()
+                        .frame(width: 155)
+                        .onHover { isHovering in
+                            vm.isHoveringCalendar = isHovering
+                        }
+                        .environmentObject(vm)
+                        .padding(.leading, widgetGap)
+                        .transition(.opacity)
+                }
             }
+            // Measured without the mirror in it. Measuring the whole row instead would let
+            // the mirror — which is square and sized FROM this height — feed its own size back.
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: RowHeightKey.self, value: proxy.size.height)
+                }
+            )
 
-            if shouldShowCamera {
+            if mirrorMounted {
                 CameraPreviewView(webcamManager: webcamManager)
-                    .scaledToFit()
+                    .frame(width: mirrorSide, height: mirrorSide)
+                    // Sits INSIDE the animated slot, so the glyph is carried by the push
+                    // rather than being laid out against it.
+                    .overlay(alignment: .topTrailing) { flashlightToggle }
+                    .overlay(alignment: .topLeading) { mirrorShotButton }
+                    .overlay { mirrorShotFeedback }
+                    // Render-only, so the pulse cannot feed back into the slot that sizes the
+                    // mirror — the measured row height drives that, and nudging it here would
+                    // make the shutter shove the calendar.
+                    .scaleEffect(mirrorShot.shutterFlash ? 0.97 : 1)
+                    .animation(.easeOut(duration: 0.09), value: mirrorShot.shutterFlash)
+                    .onHover { hovering in
+                        mirrorHovering = hovering
+                        if !hovering { mirrorShot.armSpace(false) }
+                    }
+                    // MOVEMENT, not presence. `onHover` fires twice — once in, once out — so
+                    // arming from it alone would hold Space for as long as the pointer sat
+                    // here, however long that is and whatever the user was typing elsewhere.
+                    // This fires per movement, so a still pointer stops re-arming and the
+                    // idle release takes the key back. `.ended` is a second, independent way
+                    // out that does not depend on `onHover` firing at all.
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active:
+                            mirrorShot.armSpace(mirrorShotEnabled && webcamManager.isSessionRunning)
+                        case .ended:
+                            mirrorShot.armSpace(false)
+                        }
+                    }
+                    .padding(.leading, widgetGap)
+                    // The gap is carried INSIDE the animated slot, so the mirror and the
+                    // space it occupies are one object: its growth is what pushes the
+                    // neighbours, rather than a gap opening and the mirror landing in it.
+                    .frame(width: mirrorOpen ? mirrorSide + widgetGap : 0, alignment: .leading)
+                    // Deliberately NOT cross-faded on `mirrorOpen`. A zero-width clipped slot
+                    // already hides it completely, so the fade was doing no hiding work — only
+                    // making the mirror translucent for the whole push, so the calendar showed
+                    // through the thing that is supposed to be shoving it. Opaque reads solid.
                     .opacity(vm.notchState == .closed ? 0 : 1)
                     .blur(radius: vm.notchState == .closed ? 20 : 0)
-                    .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.76, blendDuration: 0), value: shouldShowCamera)
+                    .clipped()
             }
         }
-        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
+        .animation(Self.mirrorSpring, value: mirrorOpen)
+        // The mirror is sized FROM the measured row height, so a re-measurement resizes it.
+        // Carrying that on the same curve is what stops a corrected measurement from yanking
+        // the mirror — and everything left of it — to a new position in one frame.
+        .animation(Self.mirrorSpring, value: mirrorSide)
+        .onPreferenceChange(RowHeightKey.self) { height in
+            adoptRowHeight(height)
+        }
+        .onAppear { syncMirror(animated: false) }
+        // The light is anchored on the mirror and only makes sense while you can see yourself
+        // in it, so every route that retires the mirror retires the light too. Each of these
+        // also restores display brightness, which is the reason they are explicit rather than
+        // left to `onDisappear`: the notch can close while this view is still mounted.
+        .onChange(of: shouldShowCamera) { _, shown in
+            syncMirror(animated: true)
+            if !shown {
+                flashlight.turnOff()
+                mirrorShot.armSpace(false)
+            }
+        }
+        .onChange(of: vm.notchState) { _, state in
+            if state == .closed {
+                flashlight.turnOff()
+                mirrorShot.armSpace(false)
+            }
+        }
+        .onDisappear {
+            mirrorUnmountTask?.cancel()
+            flashlight.turnOff()
+            // A bound Space that outlived the view would eat the spacebar everywhere.
+            mirrorShot.armSpace(false)
+        }
+        .onAppear { syncShotFraming() }
+        .onChange(of: mirrorSide) { _, _ in syncShotFraming() }
+        .onChange(of: mirrorShape) { _, _ in syncShotFraming() }
+        .onChange(of: cornerRadiusScaling) { _, _ in syncShotFraming() }
         .blur(radius: vm.notchState == .closed ? 30 : 0)
+    }
+
+    /// How much of the glyph is showing. Drives COLOUR alpha, never the subtree's `.opacity`.
+    private var glyphReveal: Double { (mirrorHovering || flashlight.isOn) ? 1 : 0 }
+
+    /// Revealed on mirror hover. 5pt corner inset, matching the convention #29c set for tile
+    /// corner controls.
+    ///
+    /// The reveal fades the glyph's four colours rather than wrapping it in `.opacity`, because
+    /// **`.opacity(0)` prunes a view from hit-testing outright** — it does not merely hide it.
+    /// Measured with synthesised `leftMouseDown`/`Up` over a real `NSHostingView`: the identical
+    /// control fires everywhere inside its box at `.opacity(1)` and NOWHERE at `.opacity(0)`,
+    /// and `0.001` is no better, so there is no "nearly invisible but still live" setting. That
+    /// made the glyph decorative for as long as `mirrorHovering` was false — and hover state is
+    /// the one input here already known to go stale: a resize under a stationary cursor emits
+    /// its own `onHover(false)`, and AppKit will not re-test a tracking area without a real
+    /// mouse event. Fading colours instead makes the hit region independent of the reveal;
+    /// measured identical, 32x32, at both alphas.
+    ///
+    /// The `.padding(5)` sits INSIDE the label, with `.contentShape(Rectangle())` next to it, so
+    /// the Button hit-tests its label's layout frame instead of the glyph's ink. Same 5pt inset
+    /// as before and the parent is still untouched — but the live target is the whole 32x32 box
+    /// rather than the 22x22 circle, measured 16 firing points against 9.
+    @ViewBuilder
+    /// Radius the mirror is actually drawn with. `CameraPreviewView` uses 100 for the circular
+    /// shape, which on a ~90pt square is simply "a circle"; half the side says that exactly and
+    /// survives a mirror of any size.
+    private var mirrorCornerRadius: CGFloat {
+        guard mirrorShape == .rectangle else { return mirrorSide / 2 }
+        return cornerRadiusScaling
+            ? MusicPlayerImageSizes.cornerRadiusInset.opened
+            : MusicPlayerImageSizes.cornerRadiusInset.closed
+    }
+
+    /// Hands the manager the one thing only this view knows: how round its corners are, as a
+    /// fraction of its side, so the shot can be cut at sensor resolution rather than at the
+    /// 90-odd points the mirror occupies.
+    private func syncShotFraming() {
+        guard mirrorSide > 0 else { return }
+        mirrorShot.cornerRadiusFraction = min(mirrorCornerRadius / mirrorSide, 0.5)
+    }
+
+    /// The shutter, mirroring the flashlight's corner treatment on the opposite side.
+    ///
+    /// Its reveal rides `glyphReveal` — colour alpha, never the subtree's `.opacity` — because
+    /// `.opacity(0)` removes a view from hit testing, which is what made the flashlight glyph
+    /// decorative for a whole release (#57).
+    @ViewBuilder
+    private var mirrorShotButton: some View {
+        if mirrorShotEnabled {
+            Button {
+                mirrorShot.takeShot()
+            } label: {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(glyphReveal))
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.black.opacity(0.55).opacity(glyphReveal)))
+                    .overlay(Circle().stroke(.white.opacity(0.18 * glyphReveal), lineWidth: 0.5))
+                    .padding(5)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .animation(.easeOut(duration: 0.14), value: mirrorHovering)
+            .help(mirrorShot.spaceArmed ? "Copy a shot of yourself (or press Space)" : "Copy a shot of yourself")
+        }
+    }
+
+    /// Shutter flash, then the confirmation.
+    ///
+    /// Two stages because they answer different questions and can only be honest at different
+    /// moments: the flash says "the press landed" and fires before the sensor has handed
+    /// anything over, while "Copied" can only appear once the pasteboard actually holds the
+    /// image. Fast in, slow out — a flash that faded symmetrically read as a dip in brightness
+    /// rather than a shutter.
+    @ViewBuilder
+    private var mirrorShotFeedback: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: mirrorCornerRadius)
+                .fill(.white)
+                .opacity(mirrorShot.shutterFlash ? 0.9 : 0)
+                .animation(
+                    mirrorShot.shutterFlash ? .easeOut(duration: 0.04) : .easeIn(duration: 0.3),
+                    value: mirrorShot.shutterFlash
+                )
+
+            if mirrorShot.justCopied {
+                ZStack {
+                    RoundedRectangle(cornerRadius: mirrorCornerRadius).fill(.black.opacity(0.45))
+                    VStack(spacing: 2) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Copied")
+                            .font(.system(size: 8, weight: .medium, design: .rounded))
+                    }
+                    .foregroundStyle(.white)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
+        }
+        // The mirror's own tap gesture starts and stops the session; a feedback layer that
+        // swallowed clicks would make the mirror stop responding for a second after every shot.
+        .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.18), value: mirrorShot.justCopied)
+    }
+
+    private var flashlightToggle: some View {
+        Button {
+            #if DEBUG
+            NSLog("[flashlight] glyph action fired (hovering=%@)", String(describing: mirrorHovering))
+            #endif
+            flashlight.toggle(screenUUID: vm.screenUUID)
+        } label: {
+            Image(systemName: flashlight.isOn ? "flashlight.on.fill" : "flashlight.off.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle((flashlight.isOn ? Color.black : Color.white).opacity(glyphReveal))
+                .frame(width: 22, height: 22)
+                .background(
+                    Circle().fill(
+                        (flashlight.isOn ? Color.white : Color.black.opacity(0.55))
+                            .opacity(glyphReveal)
+                    )
+                )
+                .overlay(Circle().stroke(.white.opacity(0.18 * glyphReveal), lineWidth: 0.5))
+                .padding(5)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .animation(.easeOut(duration: 0.14), value: mirrorHovering)
+        .animation(.easeOut(duration: 0.14), value: flashlight.isOn)
+        .help(flashlight.isOn ? "Turn off the flashlight" : "Light up your face")
+    }
+
+    /// Mounts the mirror at zero width before growing it, and keeps it mounted until the
+    /// collapse has finished — unmounting on the toggle would delete the thing being animated.
+    private func syncMirror(animated: Bool) {
+        mirrorUnmountTask?.cancel()
+        guard animated else {
+            mirrorMounted = shouldShowCamera
+            mirrorOpen = shouldShowCamera
+            mirrorInFlight = false
+            return
+        }
+
+        if shouldShowCamera {
+            mirrorMounted = true
+            // Growing in the same turn as the mount would land at full width immediately
+            // and skip the push entirely.
+            DispatchQueue.main.async { mirrorOpen = true }
+        } else {
+            mirrorOpen = false
+        }
+
+        armMirrorSettle()
+    }
+
+    /// One task covers the whole flight, in both directions. Closing also has to outlast it
+    /// before unmounting, and either direction has to outlast it before the row is allowed to
+    /// resize the mirror again.
+    private func armMirrorSettle() {
+        mirrorInFlight = true
+        mirrorUnmountTask?.cancel()
+        mirrorUnmountTask = Task { @MainActor in
+            try? await Task.sleep(for: Self.mirrorCollapse)
+            guard !Task.isCancelled else { return }
+            mirrorInFlight = false
+            if !shouldShowCamera { mirrorMounted = false }
+            if deferredRowHeight > 0 {
+                let height = deferredRowHeight
+                deferredRowHeight = 0
+                adoptRowHeight(height)
+            }
+        }
+    }
+
+    /// The row is measured while it is being squeezed by the very slot this height sizes, so
+    /// the loop the geometry reader was meant to break is only half broken: excluding the
+    /// mirror keeps its width out of the measurement, but not its effect on the neighbours it
+    /// is compressing. Adopting a height mid-flight moves the spring's target while it flies,
+    /// which lands as a jump; adopting one back-to-back lets that half-loop ring. So a height
+    /// is taken only at rest, and taking one re-arms the settle — at most one correction per
+    /// period, which converges instead of oscillating.
+    private func adoptRowHeight(_ height: CGFloat) {
+        guard height > 0, abs(height - rowHeight) > 1 else { return }
+        guard !mirrorInFlight else {
+            deferredRowHeight = height
+            return
+        }
+        rowHeight = height
+        if mirrorOpen { armMirrorSettle() }
+    }
+}
+
+private struct RowHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -486,6 +835,8 @@ struct MusicSliderView: View {
     let playbackRate: Double
     let isPlaying: Bool
     var onValueChange: (Double) -> Void
+    @Default(.playerColorTinting) private var playerColorTinting
+    @Default(.sliderColor) private var sliderColor
 
 
     var body: some View {
@@ -493,9 +844,7 @@ struct MusicSliderView: View {
             CustomSlider(
                 value: $sliderValue,
                 range: 0...duration,
-                color: Defaults[.sliderColor] == SliderColorEnum.albumArt
-                    ? Color(nsColor: color).ensureMinimumBrightness(factor: 0.8)
-                    : Defaults[.sliderColor] == SliderColorEnum.accent ? .effectiveAccent : .white,
+                color: sliderFill,
                 dragging: $dragging,
                 lastDragged: $lastDragged,
                 onValueChange: onValueChange
@@ -509,14 +858,26 @@ struct MusicSliderView: View {
             }
             .fontWeight(.medium)
             .foregroundColor(
-                Defaults[.playerColorTinting]
-                    ? Color(nsColor: color).ensureMinimumBrightness(factor: 0.6) : .gray
+                playerColorTinting
+                    ? .playerTint(from: color, fallback: .gray) : .gray
             )
             .font(.caption)
         }
         .onChange(of: currentDate) {
            guard !dragging, timestampDate.timeIntervalSince(lastDragged) > -1 else { return }
             sliderValue = MusicManager.shared.estimatedPlaybackPosition(at: currentDate)
+        }
+    }
+
+    private var sliderFill: Color {
+        guard playerColorTinting else { return .white }
+        switch sliderColor {
+        case .albumArt:
+            return .playerTint(from: color, fallback: .white, factor: 0.8)
+        case .accent:
+            return .effectiveAccent
+        case .white:
+            return .white
         }
     }
 

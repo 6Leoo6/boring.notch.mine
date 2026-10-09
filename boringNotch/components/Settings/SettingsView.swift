@@ -54,6 +54,12 @@ struct SettingsView: View {
                 NavigationLink(value: "Clipboard") {
                     Label("Clipboard", systemImage: "clipboard")
                 }
+                NavigationLink(value: "Agents") {
+                    Label("Agents", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                NavigationLink(value: "ScreenCapture") {
+                    Label("Screen capture", systemImage: "camera.viewfinder")
+                }
                 NavigationLink(value: "Shortcuts") {
                     Label("Shortcuts", systemImage: "keyboard")
                 }
@@ -90,6 +96,10 @@ struct SettingsView: View {
                     Shelf()
                 case "Clipboard":
                     ClipboardSettings()
+                case "Agents":
+                    AgentBridgeSettings()
+                case "ScreenCapture":
+                    ScreenCaptureSettings()
                 case "Shortcuts":
                     Shortcuts()
                 case "Extensions":
@@ -152,7 +162,10 @@ struct GeneralSettings: View {
     @Default(.automaticallySwitchDisplay) var automaticallySwitchDisplay
     @Default(.enableGestures) var enableGestures
     @Default(.openNotchOnHover) var openNotchOnHover
-    
+    @Default(.keepAwakeDuration) var keepAwakeDuration
+    @Default(.keepAwakePreventsDisplaySleep) var keepAwakePreventsDisplaySleep
+    @Default(.keepAwakeRestoreOnLaunch) var keepAwakeRestoreOnLaunch
+
 
     var body: some View {
         Form {
@@ -266,6 +279,8 @@ struct GeneralSettings: View {
 
             NotchBehaviour()
 
+            keepAwakeControls()
+
             gestureControls()
         }
         .toolbar {
@@ -280,6 +295,35 @@ struct GeneralSettings: View {
             if !openNotchOnHover {
                 enableGestures = true
             }
+        }
+    }
+
+    @ViewBuilder
+    func keepAwakeControls() -> some View {
+        Section {
+            Defaults.Toggle(key: .showKeepAwake) {
+                Text("Show keep awake button in notch")
+            }
+            Picker("Stay awake for", selection: $keepAwakeDuration) {
+                ForEach(KeepAwakeDuration.allCases) { duration in
+                    Text(duration.label).tag(duration)
+                }
+            }
+            Toggle("Also keep the display awake", isOn: $keepAwakePreventsDisplaySleep)
+                .onChange(of: keepAwakePreventsDisplaySleep) {
+                    Task { @MainActor in
+                        SleepManager.shared.reapplyDisplaySleepPreference()
+                    }
+                }
+            Toggle("Restore keep awake on launch", isOn: $keepAwakeRestoreOnLaunch)
+            Text(
+                "Keep awake holds a power assertion, so it is released the moment boring.notch quits. It cannot keep the Mac awake with the lid closed."
+            )
+            .multilineTextAlignment(.trailing)
+            .foregroundStyle(.secondary)
+            .font(.caption)
+        } header: {
+            Text("Keep awake")
         }
     }
 
@@ -904,6 +948,8 @@ struct Shelf: View {
     @Default(.shelfTapToOpen) var shelfTapToOpen: Bool
     @Default(.quickShareProvider) var quickShareProvider
     @Default(.expandedDragDetection) var expandedDragDetection: Bool
+    @Default(.commandHoverRoute) var commandHoverRoute: ModifierRoute
+    @Default(.optionHoverRoute) var optionHoverRoute: ModifierRoute
     @StateObject private var quickShareService = QuickShareService.shared
 
     private var selectedProvider: QuickShareProvider? {
@@ -943,6 +989,25 @@ struct Shelf: View {
                 HStack {
                     Text("General")
                 }
+            }
+
+            Section {
+                Picker("Hold \u{2318} Command", selection: $commandHoverRoute) {
+                    ForEach(ModifierRoute.allCases, id: \.self) { route in
+                        Text(route.label).tag(route)
+                    }
+                }
+                Picker("Hold \u{2325} Option", selection: $optionHoverRoute) {
+                    ForEach(ModifierRoute.allCases, id: \.self) { route in
+                        Text(route.label).tag(route)
+                    }
+                }
+            } header: {
+                Text("Open straight to a tab")
+            } footer: {
+                Text("Hold the key while the pointer opens the notch — hovering, clicking or swiping it down — to go straight to that tab, whatever the notch would otherwise have shown. Keyboard shortcuts and drags are unaffected, and a tab that is switched off is skipped.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             
             Section {
@@ -1072,6 +1137,219 @@ struct ClipboardSettings: View {
         }
         .accentColor(.effectiveAccent)
         .navigationTitle("Clipboard")
+    }
+}
+
+struct AgentBridgeSettings: View {
+    @Default(.agentBridgeEnabled) var enabled: Bool
+    @Default(.clipboardAutoProtectSecrets) var autoProtect: Bool
+    @ObservedObject private var server = AgentBridgeServer.shared
+    @State private var copiedCommand = false
+
+    static let helperPath = "~/.local/bin/boringnotch-mcp"
+    static let setupCommand = "claude mcp add --scope user boringnotch -- \(helperPath)"
+
+    var body: some View {
+        Form {
+            Section {
+                Defaults.Toggle(key: .agentBridgeEnabled) {
+                    Text("Allow local agents to use the shelf and clipboard")
+                }
+                .onChange(of: enabled) { _, isEnabled in
+                    Task { @MainActor in AgentBridgeServer.shared.setEnabled(isEnabled) }
+                }
+                LabeledContent("Status") {
+                    statusLabel
+                }
+            } header: {
+                Text("MCP server")
+            } footer: {
+                Text("Agents connect through the boringnotch-mcp helper, which finds this app via \(AgentBridgeDiscovery.displayPath). The server only listens on this Mac, and its access token changes every time the app starts.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section {
+                Defaults.Toggle(key: .clipboardAutoProtectSecrets) {
+                    Text("Hide secrets from agents automatically")
+                }
+            } header: {
+                Text("Clipboard protection")
+            } footer: {
+                Text("Entries copied from a password manager, or that look like API keys, tokens or private keys, are listed to agents without their content. Right-click any clipboard item to hide it from agents or to allow it anyway.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section {
+                HStack {
+                    Text(Self.setupCommand)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                    Spacer()
+                    Button(copiedCommand ? "Copied" : "Copy") {
+                        // Kept out of the history: a setup command is not something the user copied
+                        ClipboardManager.shared.copyWithoutRecording([Self.setupCommand as NSString])
+                        copiedCommand = true
+                    }
+                }
+            } header: {
+                Text("Connect Claude Code")
+            } footer: {
+                Text("Build and install the helper with mcp-helper/install.sh from the repository first.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .accentColor(.effectiveAccent)
+        .navigationTitle("Agents")
+    }
+
+    @ViewBuilder
+    private var statusLabel: some View {
+        switch server.state {
+        case .stopped:
+            Text("Off").foregroundStyle(.secondary)
+        case .starting:
+            Text("Starting…").foregroundStyle(.secondary)
+        case .listening(let port):
+            Label("Listening on 127.0.0.1:\(port)", systemImage: "checkmark.circle")
+                .foregroundStyle(.green)
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+        }
+    }
+}
+
+struct ScreenCaptureSettings: View {
+    @ObservedObject private var manager = ScreenCaptureManager.shared
+    @Default(.screenCaptureEnabled) var enabled: Bool
+    @Default(.screenCaptureToClipboard) var toClipboard: Bool
+    @Default(.screenCaptureSaveLocation) var saveLocation: String
+
+    var body: some View {
+        Form {
+            Section {
+                Defaults.Toggle(key: .screenCaptureEnabled) {
+                    Text("Enable screen capture")
+                }
+                Defaults.Toggle(key: .showCaptureControls) {
+                    Text("Show capture buttons in the notch")
+                }
+                .disabled(!enabled)
+            } header: {
+                Text("General")
+            } footer: {
+                Text("Screenshots and recordings both start by dragging out an area.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section {
+                Defaults.Toggle(key: .screenCaptureToClipboard) {
+                    Text("Copy captures instead of saving them")
+                }
+
+                HStack {
+                    Text("Save to")
+                    Spacer()
+                    Text(saveLocation)
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Button("Choose…") {
+                        ScreenCaptureManager.shared.chooseSaveLocation()
+                    }
+                }
+                .disabled(toClipboard)
+
+                if toClipboard {
+                    Button("Show copied recordings") {
+                        ScreenCaptureManager.shared.revealCopiedRecordings()
+                    }
+                }
+            } header: {
+                Text("Destination")
+            } footer: {
+                Text(toClipboard
+                     ? "Screenshots go straight to the clipboard. A recording has to be a file, so it is kept inside boring.notch and the clipboard gets the file itself — paste it anywhere that takes an attachment. Copied recordings are cleaned up after 7 days."
+                     : "Captures are saved as files. Pick the folder with Choose… — boring.notch is sandboxed, so a folder it has not been handed cannot be written to.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .disabled(!enabled)
+
+            Section {
+                Defaults.Toggle(key: .screenCaptureIncludeCursor) {
+                    Text("Include the pointer")
+                }
+                Defaults.Toggle(key: .screenCapturePlaySound) {
+                    Text("Play capture sound")
+                }
+            } header: {
+                Text("Capture")
+            } footer: {
+                Text("The pointer is only included in full-screen shots and recordings; macOS does not allow it while you are dragging out a selection.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .disabled(!enabled)
+
+            Section {
+                if !manager.canCapture {
+                    Label("This version of macOS has no screencapture tool.", systemImage: "exclamationmark.triangle")
+                        .foregroundColor(.secondary)
+                } else if manager.permissionGranted {
+                    Label("Screen Recording permission granted", systemImage: "checkmark.circle")
+                        .foregroundColor(.secondary)
+                } else {
+                    Label("Screen Recording permission is needed", systemImage: "exclamationmark.triangle")
+                        .foregroundColor(.secondary)
+                    Button("Open Privacy Settings") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+
+                if let message = manager.lastError {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                if let last = manager.lastCaptureURL {
+                    HStack {
+                        Text(manager.lastCaptureWasCopied ? "Last capture (copied)" : "Last capture")
+                        Spacer()
+                        Button("Show in Finder") {
+                            ScreenCaptureManager.shared.revealLastCapture()
+                        }
+                        .help(last.path)
+                    }
+                }
+            } header: {
+                Text("Permission")
+            }
+
+            Section {
+                Button("Open the macOS Screenshot toolbar") {
+                    ScreenCaptureManager.shared.openSystemCaptureUI()
+                }
+            } footer: {
+                Text("The same toolbar as ⇧⌘5, with the system's own options.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .accentColor(.effectiveAccent)
+        .navigationTitle("Screen capture")
+        .onAppear {
+            ScreenCaptureManager.shared.refreshPermissionState()
+        }
     }
 }
 
@@ -1218,6 +1496,7 @@ struct Appearance: View {
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     @Default(.mirrorShape) var mirrorShape
     @Default(.sliderColor) var sliderColor
+    @Default(.playerColorTinting) var playerColorTinting
     @Default(.useMusicVisualizer) var useMusicVisualizer
     @Default(.customVisualizers) var customVisualizers
     @Default(.selectedVisualizer) var selectedVisualizer
@@ -1242,21 +1521,27 @@ struct Appearance: View {
             }
 
             Section {
+                Defaults
+                    .Toggle("Player tinting", key: .playerColorTinting)
                 Defaults.Toggle(key: .coloredSpectrogram) {
                     Text("Colored spectrogram")
                 }
-                Defaults
-                    .Toggle("Player tinting", key: .playerColorTinting)
-                Defaults.Toggle(key: .lightingEffect) {
-                    Text("Enable blur effect behind album art")
-                }
+                .disabled(!playerColorTinting)
                 Picker("Slider color", selection: $sliderColor) {
                     ForEach(SliderColorEnum.allCases, id: \.self) { option in
                         Text(option.rawValue)
                     }
                 }
+                .disabled(!playerColorTinting)
+                Defaults.Toggle(key: .lightingEffect) {
+                    Text("Enable blur effect behind album art")
+                }
             } header: {
                 Text("Media")
+            } footer: {
+                Text("Player tinting colors the notch from the album art. Turn it off for a plain white and gray player.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -1444,8 +1729,24 @@ struct Appearance: View {
                     Text("Square")
                         .tag(MirrorShapeEnum.rectangle)
                 }
+                Defaults.Toggle(key: .mirrorShotEnabled) {
+                    Text("Shutter button on the mirror")
+                }
+                .disabled(!checkVideoInput())
+                Defaults.Toggle(key: .mirrorShotSpaceShortcut) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Space takes the shot while the pointer is on the mirror")
+                        Text("Space is only bound while you are hovering the mirror, so it stays free everywhere else.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .disabled(!checkVideoInput() || !Defaults[.mirrorShotEnabled])
                 Defaults.Toggle(key: .showNotHumanFace) {
                     Text("Show cool face animation while inactive")
+                }
+                Defaults.Toggle(key: .flashlightRaisesBrightness) {
+                    Text("Flashlight raises display brightness while active")
                 }
             } header: {
                 HStack {
