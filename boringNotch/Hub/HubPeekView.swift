@@ -11,7 +11,7 @@ import SwiftUI
 /// no container of its own (the island's black body is the ground). One addition the music
 /// peek doesn't need: a leading icon, because "what arrived" is the point and the strip above
 /// carries no artwork for it. While a transfer runs, a 2pt line under the text shows its
-/// progress; it fills and goes when the transfer lands.
+/// progress; it fills and goes when the transfer lands, and dims while the transfer is stalled.
 struct HubPeekView: View {
     @ObservedObject var activity = HubActivity.shared
     var onTap: () -> Void = {}
@@ -54,6 +54,8 @@ struct HubPeekView: View {
                 if item.phase == .receiving {
                     ProgressLine(fraction: item.fraction)
                         .frame(width: Self.iconSide + Self.iconGap + column, height: 2)
+                        .opacity(item.stalled ? 0.4 : 1)
+                        .animation(.smooth, value: item.stalled)
                         .transition(.opacity)
                 }
             }
@@ -102,7 +104,7 @@ struct HubPeekView: View {
             } else {
                 amount = ByteCountFormatter.string(fromByteCount: item.receivedBytes, countStyle: .file)
             }
-            return [from, amount].compactMap { $0 }.joined(separator: " · ")
+            return [from, item.stalled ? "stalled at \(amount)" : amount].compactMap { $0 }.joined(separator: " · ")
         case .arrived:
             return from ?? "On your shelf"
         case .failed:
