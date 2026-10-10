@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The hub helper (towerbridge). SMAppService only registers a sandboxed helper
+	     for a sandboxed app ("target executable must be sandboxed because the app is
+	     sandboxed"), so it runs in its own sandbox. Its home is its container
+	     (~/Library/Containers/io.github.leoo6.hub.helper/Data), where its config and
+	     pairing live. It needs the network (the hub, the notch's loopback /rpc) and
+	     read access to the notch's agent-bridge token. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+	<array>
+		<string>/.config/boringnotch/</string>
+	</array>
+</dict>
+</plist>

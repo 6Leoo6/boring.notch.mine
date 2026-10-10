@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The hub helper: towerbridge, embedded in boringNotch.app and registered by
+	     HubHelper.swift with SMAppService. It keeps this Mac on the hub mesh and answers
+	     other devices through the notch's own /rpc (6Leoo6/hub, D-128).
+	     No StandardOutPath/StandardErrorPath: smd rejects them from sandboxed apps
+	     ("plist changed between client and smd", register() fails with EINVAL). -->
+	<key>Label</key>
+	<string>io.github.leoo6.hub.helper</string>
+	<key>BundleProgram</key>
+	<string>Contents/Helpers/HubHelper.app/Contents/MacOS/towerbridge</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>towerbridge</string>
+		<string>serve</string>
+	</array>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>boring.notch.mine</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+</dict>
+</plist>

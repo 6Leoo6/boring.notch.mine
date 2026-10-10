@@ -343,6 +343,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        HubHelper.registerIfEmbedded()
 
         NotificationCenter.default.addObserver(
             self,

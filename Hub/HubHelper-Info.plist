@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Info.plist of HubHelper.app, the bundle around the hub helper (towerbridge).
+	     A sandboxed executable needs a bundle identifier in its signature, which a
+	     bare Go binary doesn't have; the bundle gives it one. Background only: no
+	     Dock icon, no menu. Versions are filled in by Hub/embed-helper.sh. -->
+	<key>CFBundleIdentifier</key>
+	<string>io.github.leoo6.hub.helper</string>
+	<key>CFBundleName</key>
+	<string>hub helper</string>
+	<key>CFBundleExecutable</key>
+	<string>towerbridge</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0</string>
+	<key>CFBundleVersion</key>
+	<string>0</string>
+	<key>LSBackgroundOnly</key>
+	<true/>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+</dict>
+</plist>
