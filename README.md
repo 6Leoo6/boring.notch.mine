@@ -84,6 +84,12 @@ mcp-helper/install.sh
 
 This builds the helper, installs it to `~/.local/bin/boringnotch-mcp` and registers it with Claude Code at user scope.
 
+### Hub helper
+- Builds can embed a helper (towerbridge from [6Leoo6/hub](https://github.com/6Leoo6/hub)) as a sandboxed login item, registered with `SMAppService` at launch. It answers the owner's other devices through the agent bridge above, including `shelf.remove`. Files: `Hub/`, `boringNotch/managers/HubHelper.swift`.
+- The app re-registers the helper when the helper, its plist or the app bundle on disk changes (an app replaced by an identical copy counts), and once more if the helper does not answer on its port shortly after launch.
+- **Dev builds use their own helper.** Ad-hoc signed builds (and any build with `HUB_HELPER_VARIANT=dev`) embed `HubHelperDev.app` with bundle id and LaunchAgent label `io.github.leoo6.hub.helper.dev`, listening on `127.0.0.1:47822`, with its own container `~/Library/Containers/io.github.leoo6.hub.helper.dev`. They never touch the release helper's container or registration, and unregister their helper when they quit.
+- A dev helper has no pairing of its own. It runs unpaired (local only) unless you give it a config and pair it in its own container under a different device id, e.g. `mac-dev`. Never copy the release helper's `peer.json` into it: two helpers polling as the same device would take each other's calls. To test remote calls through a dev build, the release helper is enough: it forwards to whichever notch build is running.
+
 ## Building from source
 
 This fork has no prebuilt releases. Upstream releases and the Homebrew cask install the original app without the features above.
