@@ -57,6 +57,7 @@ enum AgentBridgeRouter {
         case "shelf.list": return try await shelfList()
         case "shelf.get": return try await shelfGet(args)
         case "shelf.put": return try await shelfPut(args)
+        case "shelf.remove": return try await shelfRemove(args)
         case "clipboard.list": return try await clipboardList(args)
         case "clipboard.get": return try await clipboardGet(args)
         case "clipboard.add": return try await clipboardAdd(args)
@@ -236,6 +237,21 @@ enum AgentBridgeRouter {
                 "already_present": stored.id != item.id,
             ])
         }
+    }
+
+    /// Unknown ids answer `removed: false` rather than an error, so a sync helper can
+    /// retry a removal without special cases (hub contract `shelf.remove`).
+    @MainActor
+    private static func shelfRemove(_ args: Args) throws -> Payload {
+        try requireShelf()
+        guard let raw = args.string("id") else { throw BridgeError("id is required") }
+        guard let id = UUID(uuidString: raw) else { throw BridgeError("id must be a UUID") }
+        let state = ShelfStateViewModel.shared
+        guard let item = state.items.first(where: { $0.id == id }) else {
+            return Payload(value: ["removed": false])
+        }
+        state.remove(item)
+        return Payload(value: ["removed": true])
     }
 
     private static func sanitizedFileName(_ raw: String?) -> String {

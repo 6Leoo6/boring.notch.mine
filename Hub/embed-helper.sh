@@ -11,6 +11,14 @@
 # Where the binary comes from, first match wins:
 #   $HUB_TOWERBRIDGE, $SRCROOT/Hub/bin/towerbridge (gitignored), ~/.local/share/hub-dev/bin/towerbridge
 # Build it on the tower with `make build` (dist/towerbridge-darwin-arm64) and copy it to one of these.
+#
+# Variant: release (the owner's signed builds) or dev. Dev builds carry the helper as
+# Helpers/HubHelperDev.app with bundle id and label io.github.leoo6.hub.helper.dev, listening
+# on 127.0.0.1:47822, so they get their own sandbox container and LaunchAgent and never touch
+# the release helper's (macOS stops a differently signed helper at its container with an
+# "differs from previously opened versions" prompt). Dev is chosen by HUB_HELPER_VARIANT=dev
+# (the hub repo's `mac notch build` sets it) and is the default for ad-hoc signed builds;
+# HUB_HELPER_VARIANT=release forces the release layout.
 set -euo pipefail
 
 src=""
@@ -18,10 +26,21 @@ for c in "${HUB_TOWERBRIDGE:-}" "$SRCROOT/Hub/bin/towerbridge" "$HOME/.local/sha
   [[ -n $c && -x $c ]] && { src=$c; break; }
 done
 
+identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
+[[ -z $identity ]] && identity=-
+variant="${HUB_HELPER_VARIANT:-}"
+[[ -z $variant ]] && { [[ $identity == - ]] && variant=dev || variant=release; }
+case $variant in
+  release) label=io.github.leoo6.hub.helper;     bundle_name=HubHelper.app ;;
+  dev)     label=io.github.leoo6.hub.helper.dev; bundle_name=HubHelperDev.app ;;
+  *) echo "error: HUB_HELPER_VARIANT must be release or dev, not '$variant'"; exit 1 ;;
+esac
+
 contents="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH"
-bundle="$contents/Helpers/HubHelper.app"
-agent="$contents/Library/LaunchAgents/io.github.leoo6.hub.helper.plist"
-rm -rf "$bundle" "$contents/Helpers/towerbridge" "$agent"
+bundle="$contents/Helpers/$bundle_name"
+agent="$contents/Library/LaunchAgents/$label.plist"
+rm -rf "$contents/Helpers/HubHelper.app" "$contents/Helpers/HubHelperDev.app" "$contents/Helpers/towerbridge" \
+  "$contents/Library/LaunchAgents/io.github.leoo6.hub.helper.plist" "$contents/Library/LaunchAgents/io.github.leoo6.hub.helper.dev.plist"
 
 if [[ -z $src ]]; then
   echo "warning: hub helper not embedded: no towerbridge binary (see Hub/embed-helper.sh). The app works without it; this Mac just won't join the hub."
@@ -38,9 +57,14 @@ cp -f "$SRCROOT/Hub/HubHelper-Info.plist" "$bundle/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$bundle_version" "$bundle/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$bundle_version" "$bundle/Contents/Info.plist"
 cp -f "$SRCROOT/Hub/io.github.leoo6.hub.helper.plist" "$agent"
+if [[ $variant == dev ]]; then
+  plutil -replace CFBundleIdentifier -string "$label" "$bundle/Contents/Info.plist"
+  plutil -replace CFBundleName -string "hub helper (dev)" "$bundle/Contents/Info.plist"
+  plutil -replace Label -string "$label" "$agent"
+  plutil -replace BundleProgram -string "Contents/Helpers/$bundle_name/Contents/MacOS/towerbridge" "$agent"
+  plutil -replace ProgramArguments -json '["towerbridge","serve","--listen","127.0.0.1:47822"]' "$agent"
+fi
 
-identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
-[[ -z $identity ]] && identity=-
 codesign --force --options runtime --timestamp=none --sign "$identity" \
   --entitlements "$SRCROOT/Hub/helper.entitlements" "$bundle"
-echo "hub helper ${version:-?} embedded from $src, signed with $identity"
+echo "hub helper ${version:-?} ($variant, $label) embedded from $src, signed with $identity"

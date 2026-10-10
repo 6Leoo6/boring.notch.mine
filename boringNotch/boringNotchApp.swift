@@ -93,6 +93,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         cleanupDragDetectors()
         cleanupWindows()
         XPCHelperClient.shared.stopMonitoringAccessibilityAuthorization()
+        HubHelper.unregisterDevHelperOnQuit()
     }
 
     @MainActor
