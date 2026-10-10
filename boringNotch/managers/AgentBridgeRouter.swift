@@ -6,6 +6,7 @@
 import AppKit
 import Defaults
 import Foundation
+import SwiftUI
 
 /// The operations behind `AgentBridgeServer`: `{"op": "...", "args": {...}}` in,
 /// `{"ok": true, "result": ...}` or `{"ok": false, "error": "..."}` out.
@@ -58,8 +59,10 @@ enum AgentBridgeRouter {
         case "shelf.get": return try await shelfGet(args)
         case "shelf.put": return try await shelfPut(args)
         case "shelf.remove": return try await shelfRemove(args)
+        case "events.push": return try await eventsPush(args)
         #if DEBUG
         case "debug.hub_peek": return await debugHubPeek(args)
+        case "debug.hub_peek_render": return await debugHubPeekRender()
         #endif
         case "clipboard.list": return try await clipboardList(args)
         case "clipboard.get": return try await clipboardGet(args)
@@ -270,7 +273,98 @@ enum AgentBridgeRouter {
                 fail: args.string("mode") == "fail"
             )
         }
-        return Payload(value: ["shown": true])
+        // Whether a closed notch hides its peeks right now (a full-screen app with "Hide the
+        // notch" on), so an agent can tell an empty screenshot from a broken peek.
+        let delegate = NSApp.delegate as? AppDelegate
+        let hidden = [delegate?.vm].compactMap { $0 } + (delegate.map { Array($0.viewModels.values) } ?? [])
+        return Payload(value: ["shown": true, "hidden_by_fullscreen": hidden.contains { $0.hideOnClosed }])
+    }
+    #endif
+
+    // MARK: - Events
+
+    /// What the agent bridge accepts from `events.push` (hub contract, D-139): 1..64 events,
+    /// each `{topic, type, time?, origin?, data?}` with `data` at most 4 KiB of JSON.
+    static let maxPushedEvents = 64
+    static let maxPushedEventData = 4096
+
+    /// `events.push`: the hub helper hands over its `transfer` events while it receives a file
+    /// (the sandboxed notch can't long-poll the helper). The notch keeps no event stream of its
+    /// own, so the events drive the hub peek and are not kept; other topics are accepted and
+    /// ignored. A malformed batch is refused whole, nothing of it shown.
+    private static func eventsPush(_ args: Args) async throws -> Payload {
+        guard let raw = args.raw["events"] as? [Any] else {
+            throw BridgeError("events is required: an array of {topic, type, data}")
+        }
+        guard (1...maxPushedEvents).contains(raw.count) else {
+            throw BridgeError("events must hold 1 to \(maxPushedEvents) events, not \(raw.count)")
+        }
+        let decoder = JSONDecoder()
+        var transfers: [(type: String, event: HubRPC.TransferEvent)] = []
+        for (index, element) in raw.enumerated() {
+            guard let object = element as? [String: Any],
+                  let encoded = try? JSONSerialization.data(withJSONObject: object),
+                  let pushed = try? decoder.decode(HubRPC.PushedEvent.self, from: encoded)
+            else { throw BridgeError("events[\(index)] must be {topic, type, data?} with string topic and type, and data an object") }
+            guard !pushed.topic.isEmpty, !pushed.type.isEmpty else {
+                throw BridgeError("events[\(index)]: topic and type must not be empty")
+            }
+            let data = object["data"] as? [String: Any] ?? [:]
+            let dataBytes = (try? JSONSerialization.data(withJSONObject: data)) ?? Data()
+            guard dataBytes.count <= maxPushedEventData else {
+                throw BridgeError("events[\(index)].data is \(dataBytes.count) bytes; the limit is \(maxPushedEventData)")
+            }
+            guard pushed.topic == "transfer" else { continue }
+            // A failure code this build doesn't know yet still counts as a failure.
+            var fields = data
+            if let code = fields["code"] as? String, HubRPC.TransferFailure(rawValue: code) == nil {
+                fields.removeValue(forKey: "code")
+            }
+            guard let fieldBytes = try? JSONSerialization.data(withJSONObject: fields),
+                  let event = try? decoder.decode(HubRPC.TransferEvent.self, from: fieldBytes)
+            else {
+                throw BridgeError("events[\(index)].data is not a transfer event: it needs transfer_id, name, size, from and received_bytes")
+            }
+            transfers.append((pushed.type, event))
+        }
+        let accepted = raw.count
+        if !transfers.isEmpty {
+            await MainActor.run {
+                for transfer in transfers { HubActivity.shared.handle(transfer.event, type: transfer.type) }
+            }
+        }
+        return Payload(value: ["published": accepted])
+    }
+
+    #if DEBUG
+    /// Debug builds only: the hub peek as it is drawn right now, rendered off screen on the
+    /// island's black (PNG, 2x). For checks while the screen is locked or asleep, when the
+    /// window server keeps showing a stale frame and screenshots can't see the notch.
+    @MainActor
+    private static func debugHubPeekRender() -> Payload {
+        let activity = HubActivity.shared
+        guard let item = activity.item else { return Payload(value: ["item": NSNull()]) }
+        let view = HubPeekView()
+            .padding(.horizontal, 14)
+            .padding(.top, 4)
+            .padding(.bottom, 10)
+            .background(Color.black)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        var out: [String: Any] = [
+            "id": item.id,
+            "name": item.name,
+            "phase": "\(item.phase)",
+            "received_bytes": item.receivedBytes,
+            "size": item.size,
+            "stalled": item.stalled,
+            "peek_up": BoringViewCoordinator.shared.sneakPeek.show && BoringViewCoordinator.shared.sneakPeek.type == .hub,
+        ]
+        if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) {
+            out["png_base64"] = png.base64EncodedString()
+        }
+        return Payload(value: out)
     }
     #endif
 

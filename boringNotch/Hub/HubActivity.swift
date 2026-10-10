@@ -18,10 +18,15 @@ import SwiftUI
 /// Two ways in:
 /// - `arrived(_:from:fromKind:)`: an item put on the shelf through the agent bridge
 ///   (`shelf.put`, which is how the hub helper delivers what another device sends).
-/// - `transferStarted / Progress / Completed / Failed`: a chunked transfer that reports as it
-///   goes. Nothing calls these yet; they wait for the hub's transfer events (docs/TRANSFER.md
-///   in the hub repo). DEBUG builds drive them with `previewTransfer` (bridge op
-///   `debug.hub_peek`).
+/// - `handle(_:type:)`: the hub's `transfer` events (docs/TRANSFER.md in the hub repo), which
+///   the helper hands to the notch with `events.push` while it receives a file in chunks:
+///   started and progress show the line, completed turns it into the arrival, failed says so
+///   (a cancel just hides it). DEBUG builds can also fake one with `previewTransfer`
+///   (bridge op `debug.hub_peek`).
+///
+/// A finished transfer reaches the notch twice: the helper's commit forwards one `shelf.put`,
+/// then pushes `transfer.completed` (whose `item` is that shelf item). The first one to arrive
+/// turns the progress peek into the arrival; the second only fills in what is missing.
 @MainActor
 final class HubActivity: ObservableObject {
     static let shared = HubActivity()
@@ -29,6 +34,7 @@ final class HubActivity: ObservableObject {
     struct Item: Equatable {
         enum Phase: Equatable { case receiving, arrived, failed }
 
+        /// The transfer id while a transfer is shown, else the shelf item's id.
         var id: String
         var name: String
         /// The sender's device name ("Tower", "Pixel 8"), when the caller said.
@@ -40,6 +46,10 @@ final class HubActivity: ObservableObject {
         /// 0 when the size is unknown: the line then runs indeterminate.
         var size: Int64 = 0
         var isFile: Bool = true
+        /// The receiver has had no chunk for a while (the helper says so after 30 s).
+        var stalled: Bool = false
+        /// The shelf item this became, once known.
+        var shelfID: String?
 
         var fraction: Double? {
             guard size > 0 else { return nil }
@@ -54,11 +64,24 @@ final class HubActivity: ObservableObject {
     /// How long a finished arrival stays up. Longer than the 1.5s HUD default: it is
     /// something to read (a name and a sender), not a level to glance at.
     static let arrivalDuration: TimeInterval = 4
-    /// A transfer stays up while it reports; this long without a report and the peek goes.
-    static let stallDuration: TimeInterval = 8
+    /// A transfer stays up while it reports. The helper reports at least every chunk (1 MiB)
+    /// and says `stalled` after 30 s without one, so a little more than that before the peek
+    /// gives up on a transfer that went quiet.
+    static let receivingDuration: TimeInterval = 35
+    /// How long "stalled" stays up; the next chunk brings the line back.
+    static let stalledDuration: TimeInterval = 6
+    /// "Didn't arrive" is brief: there is nothing to do about it from here.
+    static let failureDuration: TimeInterval = 3
 
     private var lastKeepAlive: Date = .distantPast
     private var iconTask: Task<Void, Never>?
+    /// Transfers that completed, failed or were cancelled lately: a late or reordered push
+    /// for one of them must not bring its progress line back.
+    private var finishedTransfers: [String] = []
+    /// Shelf items that already had their arrival peek, so a transfer's `completed` after its
+    /// `shelf.put` doesn't show a second one.
+    private var announcedShelfIDs: [String] = []
+    private static let memory = 32
 
     private init() {}
 
@@ -68,59 +91,155 @@ final class HubActivity: ObservableObject {
 
     func arrived(_ shelfItem: ShelfItem, from: String?, fromKind: String?) {
         guard enabled else { return }
+        let shelfID = shelfItem.id.uuidString
+        Self.remember(shelfID, in: &announcedShelfIDs)
         var isFile = false
         if case .file = shelfItem.kind { isFile = true }
+
+        // The shelf.put a finished transfer becomes: same peek, now as the arrival.
+        if isFile, var current = item, current.phase == .receiving, !finishedTransfers.contains(current.id),
+           current.name == shelfItem.displayName || (current.fraction ?? 0) >= 1 {
+            current.phase = .arrived
+            current.stalled = false
+            current.shelfID = shelfID
+            if current.size > 0 { current.receivedBytes = current.size }
+            current.from = current.from ?? Self.clean(from)
+            current.fromKind = current.fromKind ?? Self.clean(fromKind)?.lowercased()
+            withAnimation(.smooth) { item = current }
+            loadIcon(for: shelfItem)
+            present(for: Self.arrivalDuration)
+            return
+        }
+
         item = Item(
-            id: shelfItem.id.uuidString,
+            id: shelfID,
             name: shelfItem.displayName,
             from: Self.clean(from),
             fromKind: Self.clean(fromKind)?.lowercased(),
             phase: .arrived,
-            isFile: isFile
+            isFile: isFile,
+            shelfID: shelfID
         )
         loadIcon(for: shelfItem)
         present(for: Self.arrivalDuration)
     }
 
-    // MARK: - Transfers (hub transfer events, not wired yet)
+    // MARK: - Transfer events (events.push from the hub helper)
 
-    func transferStarted(id: String, name: String, size: Int64, from: String?, fromKind: String? = nil) {
-        guard enabled else { return }
-        iconTask?.cancel()
-        icon = nil
-        item = Item(
-            id: id, name: name, from: Self.clean(from), fromKind: Self.clean(fromKind)?.lowercased(),
-            phase: .receiving, receivedBytes: 0, size: max(0, size)
-        )
-        present(for: Self.stallDuration)
-    }
-
-    func transferProgress(id: String, receivedBytes: Int64, size: Int64? = nil) {
-        guard var current = item, current.id == id, current.phase == .receiving else { return }
-        current.receivedBytes = max(current.receivedBytes, receivedBytes)
-        if let size, size > 0 { current.size = size }
-        withAnimation(.linear(duration: 0.25)) { item = current }
-        // Re-arm the hide timer, but not on every chunk: each re-show is an animated state change.
-        if Date().timeIntervalSince(lastKeepAlive) > 1 {
-            present(for: Self.stallDuration)
+    /// One `transfer`-topic event. Unknown types are ignored, so a newer helper can add some.
+    func handle(_ event: HubRPC.TransferEvent, type: String) {
+        let from = event.fromName ?? (event.from.isEmpty ? nil : event.from)
+        switch HubRPC.EventType(rawValue: type) {
+        case .transferStarted:
+            transferStarted(id: event.transferId, name: event.name, size: event.size,
+                            receivedBytes: event.receivedBytes, from: from, fromKind: event.fromKind)
+        case .transferProgress:
+            transferProgress(id: event.transferId, receivedBytes: event.receivedBytes, size: event.size,
+                             stalled: event.stalled ?? false, name: event.name, from: from, fromKind: event.fromKind)
+        case .transferCompleted:
+            transferCompleted(id: event.transferId, shelfID: event.item?.id, name: event.name,
+                              size: event.size, from: from, fromKind: event.fromKind)
+        case .transferFailed:
+            transferFailed(id: event.transferId, cancelled: event.code == .cancelled)
+        case nil:
+            break
         }
     }
 
-    /// `shelfItem` is what the transfer became on the shelf, for its thumbnail.
-    func transferCompleted(id: String, shelfItem: ShelfItem? = nil) {
-        guard var current = item, current.id == id else { return }
+    func transferStarted(id: String, name: String, size: Int64, receivedBytes: Int64 = 0,
+                         from: String?, fromKind: String? = nil) {
+        // A begin for a finished id is a new transfer (the sender started over).
+        finishedTransfers.removeAll { $0 == id }
+        guard enabled else { return }
+        if var current = item, current.id == id, current.phase == .receiving {
+            // Resumed (or a repeated begin): keep the line where it was.
+            current.name = name
+            if size > 0 { current.size = size }
+            current.receivedBytes = max(current.receivedBytes, receivedBytes)
+            current.stalled = false
+            withAnimation(.smooth) { item = current }
+        } else {
+            iconTask?.cancel()
+            icon = nil
+            item = Item(
+                id: id, name: name, from: Self.clean(from), fromKind: Self.clean(fromKind)?.lowercased(),
+                phase: .receiving, receivedBytes: max(0, receivedBytes), size: max(0, size)
+            )
+        }
+        present(for: Self.receivingDuration)
+    }
+
+    func transferProgress(id: String, receivedBytes: Int64, size: Int64? = nil, stalled: Bool = false,
+                          name: String? = nil, from: String? = nil, fromKind: String? = nil) {
+        guard enabled, !finishedTransfers.contains(id) else { return }
+        guard var current = item, current.id == id else {
+            // Any event can start the line (the notch may have missed `started`), unless
+            // another transfer is on show and still reporting.
+            if let name, !isShowingOtherTransfer(than: id) {
+                transferStarted(id: id, name: name, size: size ?? 0, receivedBytes: receivedBytes,
+                                from: from, fromKind: fromKind)
+                if stalled { transferProgress(id: id, receivedBytes: receivedBytes, stalled: true) }
+            }
+            return
+        }
+        guard current.phase == .receiving else { return }
+        let wasStalled = current.stalled
+        current.receivedBytes = max(current.receivedBytes, receivedBytes)
+        if let size, size > 0 { current.size = size }
+        current.stalled = stalled
+        withAnimation(.linear(duration: 0.25)) { item = current }
+        if stalled {
+            if !wasStalled { present(for: Self.stalledDuration) }
+        } else if wasStalled || Date().timeIntervalSince(lastKeepAlive) > 1 {
+            // Re-arm the hide timer, but not on every chunk: each re-show is an animated state change.
+            present(for: Self.receivingDuration)
+        }
+    }
+
+    /// `shelfID` is the shelf item the transfer became (the event's `item.id`).
+    func transferCompleted(id: String, shelfID: String? = nil, name: String? = nil, size: Int64 = 0,
+                           from: String? = nil, fromKind: String? = nil) {
+        Self.remember(id, in: &finishedTransfers)
+        // Its shelf.put came first and already showed the arrival.
+        if let shelfID, announcedShelfIDs.contains(shelfID) { return }
+        guard enabled else { return }
+        let shelfItem = shelfID.flatMap { raw in
+            ShelfStateViewModel.shared.items.first { $0.id.uuidString == raw }
+        }
+        if let shelfID { Self.remember(shelfID, in: &announcedShelfIDs) }
+        var current: Item
+        if let shown = item, shown.id == id {
+            current = shown
+        } else if let name {
+            current = Item(id: id, name: name, from: Self.clean(from), fromKind: Self.clean(fromKind)?.lowercased(),
+                           phase: .receiving, size: max(0, size))
+            iconTask?.cancel()
+            icon = nil
+        } else {
+            return
+        }
+        guard current.phase != .arrived else { return }
         current.phase = .arrived
+        current.stalled = false
+        current.shelfID = shelfID
         if current.size > 0 { current.receivedBytes = current.size }
         withAnimation(.smooth) { item = current }
         if let shelfItem { loadIcon(for: shelfItem) }
         present(for: Self.arrivalDuration)
     }
 
-    func transferFailed(id: String) {
-        guard var current = item, current.id == id else { return }
+    /// A cancel only takes the line away; anything else says it didn't arrive, briefly.
+    func transferFailed(id: String, cancelled: Bool = false) {
+        Self.remember(id, in: &finishedTransfers)
+        guard var current = item, current.id == id, current.phase == .receiving else { return }
+        if cancelled || !enabled {
+            hide()
+            return
+        }
         current.phase = .failed
+        current.stalled = false
         withAnimation(.smooth) { item = current }
-        present(for: Self.arrivalDuration)
+        present(for: Self.failureDuration)
     }
 
     // MARK: - Presentation
@@ -128,6 +247,27 @@ final class HubActivity: ObservableObject {
     private func present(for duration: TimeInterval) {
         lastKeepAlive = Date()
         BoringViewCoordinator.shared.toggleSneakPeek(status: true, type: .hub, duration: duration)
+    }
+
+    /// Takes the peek down if it is ours (never another peek that replaced it).
+    private func hide() {
+        let coordinator = BoringViewCoordinator.shared
+        if coordinator.sneakPeek.show && coordinator.sneakPeek.type == .hub {
+            coordinator.toggleSneakPeek(status: false, type: .hub)
+        }
+    }
+
+    private func isShowingOtherTransfer(than id: String) -> Bool {
+        guard let current = item, current.id != id, current.phase == .receiving else { return false }
+        let coordinator = BoringViewCoordinator.shared
+        return coordinator.sneakPeek.show && coordinator.sneakPeek.type == .hub
+            && Date().timeIntervalSince(lastKeepAlive) < Self.receivingDuration
+    }
+
+    private static func remember(_ id: String, in list: inout [String]) {
+        list.removeAll { $0 == id }
+        list.append(id)
+        if list.count > memory { list.removeFirst(list.count - memory) }
     }
 
     private func loadIcon(for shelfItem: ShelfItem) {
