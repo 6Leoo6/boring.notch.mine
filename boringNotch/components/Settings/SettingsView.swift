@@ -984,6 +984,9 @@ struct Shelf: View {
                 Defaults.Toggle(key: .autoRemoveShelfItems) {
                     Text("Remove from shelf after dragging")
                 }
+                Defaults.Toggle(key: .showHubArrivals) {
+                    Text("Show when files arrive")
+                }
 
             } header: {
                 HStack {

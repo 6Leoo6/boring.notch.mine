@@ -18,6 +18,14 @@ enum SneakContentType {
     case mic
     case battery
     case download
+    /// Something arriving from another device through the hub (`HubActivity`, `HubPeekView`).
+    case hub
+}
+
+extension SneakContentType {
+    /// Drawn by the system-event HUD (inline or the indicator below the island). Music,
+    /// battery and hub have peeks of their own.
+    var usesSystemHUD: Bool { self != .music && self != .battery && self != .hub }
 }
 
 struct sneakPeek {
@@ -262,7 +270,7 @@ class BoringViewCoordinator: ObservableObject {
         icon: String = ""
     ) {
         sneakPeekDuration = duration
-        if type != .music {
+        if type != .music && type != .hub {
             // close()
             if !Defaults[.hudReplacement] {
                 return

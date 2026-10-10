@@ -58,6 +58,9 @@ enum AgentBridgeRouter {
         case "shelf.get": return try await shelfGet(args)
         case "shelf.put": return try await shelfPut(args)
         case "shelf.remove": return try await shelfRemove(args)
+        #if DEBUG
+        case "debug.hub_peek": return await debugHubPeek(args)
+        #endif
         case "clipboard.list": return try await clipboardList(args)
         case "clipboard.get": return try await clipboardGet(args)
         case "clipboard.add": return try await clipboardAdd(args)
@@ -231,6 +234,10 @@ enum AgentBridgeRouter {
             // `add` dedupes by identity, so the id that survived may be an older twin's
             let key = item.identityKey
             let stored = state.items.first { $0.identityKey == key } ?? item
+            // Anything put here came over the bridge, i.e. not a local drag: the hub helper
+            // delivering another device's share. `from` / `from_kind` name the sender when
+            // the caller knows it (optional; the peek says "On your shelf" without them).
+            HubActivity.shared.arrived(stored, from: args.string("from"), fromKind: args.string("from_kind"))
             return Payload(value: [
                 "id": stored.id.uuidString,
                 "name": stored.displayName,
@@ -238,6 +245,34 @@ enum AgentBridgeRouter {
             ])
         }
     }
+
+    #if DEBUG
+    /// Debug builds only: previews the hub peek without another device. `mode` "transfer"
+    /// (default) runs fake progress over `seconds` for `size` bytes, then lands; "fail" stops
+    /// at 60%; "arrival" shows a finished arrival for the newest shelf item.
+    @MainActor
+    private static func debugHubPeek(_ args: Args) -> Payload {
+        let from = args.string("from")
+        let kind = args.string("from_kind")
+        switch args.string("mode") ?? "transfer" {
+        case "arrival":
+            guard let item = ShelfStateViewModel.shared.items.last else {
+                return Payload(value: ["shown": false])
+            }
+            HubActivity.shared.arrived(item, from: from, fromKind: kind)
+        default:
+            let seconds = (args.raw["seconds"] as? NSNumber)?.doubleValue ?? 6
+            HubActivity.shared.previewTransfer(
+                name: args.string("name") ?? "IMG_2041.HEIC",
+                size: Int64(args.int("size") ?? 48_000_000),
+                seconds: max(0.5, seconds),
+                from: from, fromKind: kind,
+                fail: args.string("mode") == "fail"
+            )
+        }
+        return Payload(value: ["shown": true])
+    }
+    #endif
 
     /// Unknown ids answer `removed: false` rather than an error, so a sync helper can
     /// retry a removal without special cases (hub contract `shelf.remove`).
