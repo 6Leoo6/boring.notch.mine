@@ -507,7 +507,7 @@ struct ContentView: View {
                             .frame(width: 76, alignment: .trailing)
                         }
                         .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
-                      } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed {
+                      } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && coordinator.sneakPeek.type.usesSystemHUD && vm.notchState == .closed {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
@@ -536,7 +536,7 @@ struct ContentView: View {
                        }
 
                       if coordinator.sneakPeek.show {
-                          if (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && !Defaults[.inlineHUD] && vm.notchState == .closed {
+                          if coordinator.sneakPeek.type.usesSystemHUD && !Defaults[.inlineHUD] && vm.notchState == .closed {
                               SystemEventIndicatorModifier(
                                   eventType: $coordinator.sneakPeek.type,
                                   value: $coordinator.sneakPeek.value,
@@ -582,6 +582,22 @@ struct ContentView: View {
                                               .combined(with: .scale(scale: 0.94, anchor: .top))
                                       )
                               }
+                          }
+                          else if coordinator.sneakPeek.type == .hub && vm.notchState == .closed && !vm.hideOnClosed {
+                              // Same slot, frame and entrance as the music peek above, so an
+                              // arrival reads like a track change. Tapping it opens the shelf.
+                              HubPeekView(onTap: openShelfFromPeek)
+                                  .frame(
+                                      minWidth: max(closedStripWidth, vm.closedNotchSize.width),
+                                      alignment: .center
+                                  )
+                                  .padding(.top, 4)
+                                  .padding(.bottom, 10)
+                                  .transition(
+                                      .move(edge: .top)
+                                          .combined(with: .opacity)
+                                          .combined(with: .scale(scale: 0.94, anchor: .top))
+                                  )
                           }
                       }
                   }
@@ -860,6 +876,14 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) {
             performer.perform(.levelChange, performanceTime: .now)
         }
+    }
+
+    /// A tap on the hub peek: open on the shelf panel whatever the routing would pick.
+    private func openShelfFromPeek() {
+        coordinator.toggleSneakPeek(status: false, type: .hub)
+        TabRoutingManager.shared.prepareForDrop()
+        doOpen(trigger: .system)
+        coordinator.currentView = .shelf
     }
 
     /// Defaults to `.pointer` because every caller here is the cursor acting on the island —
