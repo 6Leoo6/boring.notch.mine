@@ -28,6 +28,14 @@ struct Bookmark: Sendable, Equatable, Codable {
             NSLog("✅ Successfully created bookmark for \(url.path)")
             self.data = bookmark
         } catch {
+            // A file the sandbox lets us read through an entitlement (the hub inbox,
+            // ~/Documents/Hub) rather than a user selection can't get a security-scoped
+            // bookmark; a plain one is enough there, since access doesn't depend on it.
+            if let plain = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
+                NSLog("✅ Created a plain bookmark for \(url.path)")
+                self.data = plain
+                return
+            }
             NSLog("❌ Failed to create bookmark for \(url.path): \(error.localizedDescription)")
             throw error
         }
@@ -48,7 +56,16 @@ struct Bookmark: Sendable, Equatable, Codable {
                 return (url, newData)
             }
             return (url, nil)
-        } catch {
+        } catch let scopedError {
+            // A plain bookmark (see init(url:)).
+            if let url = try? URL(resolvingBookmarkData: data, options: [.withoutUI], relativeTo: nil, bookmarkDataIsStale: &isStale),
+               FileManager.default.fileExists(atPath: url.path) {
+                if isStale, let newData = try? url.bookmarkData(options: []) {
+                    return (url, newData)
+                }
+                return (url, nil)
+            }
+            let error = scopedError
             NSLog("❌ Failed to resolve bookmark: \(error.localizedDescription)")
             return (nil, nil)
         }

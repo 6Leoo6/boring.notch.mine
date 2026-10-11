@@ -18,5 +18,13 @@
 	<array>
 		<string>/.config/boringnotch/</string>
 	</array>
+	<!-- The inbox (hub D-142): files other devices send are saved in ~/Documents/Hub
+	     (macOS asks once whether "hub helper" may access the Documents folder). The
+	     second is the agents' test inbox for the dev helper (setting transfer.inbox). -->
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
+	<array>
+		<string>/Documents/Hub/</string>
+		<string>/.local/share/hub-dev/inbox/</string>
+	</array>
 </dict>
 </plist>

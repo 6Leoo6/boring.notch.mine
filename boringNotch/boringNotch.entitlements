@@ -25,6 +25,14 @@
 		<string>com.spotify.client</string>
 		<string>com.apple.Music</string>
 	</array>
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+	<array>
+		<!-- Files other devices send over the hub (hub D-142): the helper saves them here
+		     and the shelf references them. The second is the agents' test inbox (dev
+		     helper; outside Documents, so no privacy prompt during agent tests). -->
+		<string>/Documents/Hub/</string>
+		<string>/.local/share/hub-dev/inbox/</string>
+	</array>
 	<key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
 	<array>
 		<string>/.config/boringnotch/</string>

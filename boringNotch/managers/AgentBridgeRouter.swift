@@ -217,6 +217,22 @@ enum AgentBridgeRouter {
                 throw BridgeError("url must be an absolute non-file URL")
             }
             kind = .link(url: url)
+        } else if let raw = args.string("path") {
+            // A file already on this Mac, put on the shelf by reference (hub D-142): the
+            // hub helper hands over what other devices send, saved in ~/Documents/Hub, so
+            // removing the item leaves the file. Not temporary, deduplicated by path. Only
+            // the helper and local agents reach this /rpc (loopback + token); the helper
+            // never passes a path that came from another device.
+            guard raw.hasPrefix("/") else { throw BridgeError("path must be absolute") }
+            let url = URL(fileURLWithPath: raw).standardizedFileURL
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+                throw BridgeError("path must be an existing file this app can read")
+            }
+            guard let bookmark = try? Bookmark(url: url).data else {
+                throw BridgeError("Could not keep a reference to \(url.lastPathComponent)")
+            }
+            kind = .file(bookmark: bookmark)
         } else if let encoded = args.string("data_base64") {
             guard let data = Data(base64Encoded: encoded) else { throw BridgeError("data_base64 is not valid base64") }
             guard data.count <= maxPayloadBytes else { throw BridgeError("File exceeds \(maxPayloadBytes) bytes") }
@@ -227,7 +243,7 @@ enum AgentBridgeRouter {
             kind = .file(bookmark: bookmark)
             isTemporary = true
         } else {
-            throw BridgeError("Provide one of text, url, or data_base64 + file_name")
+            throw BridgeError("Provide one of text, url, path, or data_base64 + file_name")
         }
 
         return await MainActor.run {
