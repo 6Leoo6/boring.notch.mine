@@ -202,7 +202,6 @@ final class HubActivity: ObservableObject {
         Self.remember(id, in: &finishedTransfers)
         // Its shelf.put came first and already showed the arrival.
         if let shelfID, announcedShelfIDs.contains(shelfID) { return }
-        HubArrivalIndicator.shared.show(.file)
         guard enabled else { return }
         let shelfItem = shelfID.flatMap { raw in
             ShelfStateViewModel.shared.items.first { $0.id.uuidString == raw }

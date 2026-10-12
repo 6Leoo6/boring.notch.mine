@@ -130,7 +130,7 @@ struct ContentView: View {
     /// The arrival icon on its own (no music strip to borrow the slot from). Checked after the
     /// music branch everywhere it is used, so it only ever applies without music.
     private var arrivalStripIsLive: Bool {
-        arrival.kind != nil && !coordinator.expandingView.show && vm.notchState == .closed && !vm.hideOnClosed
+        arrival.isShowing && !coordinator.expandingView.show && vm.notchState == .closed && !vm.hideOnClosed
     }
 
     private var computedChinWidth: CGFloat {
@@ -537,7 +537,7 @@ struct ContentView: View {
                       } else if arrivalStripIsLive {
                           ArrivalLiveActivity()
                               .frame(alignment: .center)
-                              // Same reason as the music strip: a file peek under it centres on this width.
+                              // Same reason as the music strip: a peek under it centres on this width.
                               .background {
                                   GeometryReader { proxy in
                                       Color.clear.preference(
@@ -708,8 +708,8 @@ struct ContentView: View {
                 .fill(.black)
                 .frame(width: vm.closedNotchSize.width + -cornerRadiusInsets.closed.top)
             HStack {
-                if let kind = arrival.kind {
-                    HubArrivalIcon(kind: kind)
+                if arrival.isShowing {
+                    HubArrivalIcon()
                 }
             }
             .frame(width: side, height: side, alignment: .center)
@@ -786,9 +786,9 @@ struct ContentView: View {
                 )
 
             HStack {
-                if let kind = arrival.kind {
-                    // An arrival from another device borrows the slot for a moment.
-                    HubArrivalIcon(kind: kind)
+                if arrival.isShowing {
+                    // A copy from another device borrows the slot for a moment.
+                    HubArrivalIcon()
                 } else if useMusicVisualizer {
                     Rectangle()
                         .fill(
