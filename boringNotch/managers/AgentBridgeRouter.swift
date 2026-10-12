@@ -63,6 +63,7 @@ enum AgentBridgeRouter {
         #if DEBUG
         case "debug.hub_peek": return await debugHubPeek(args)
         case "debug.hub_peek_render": return await debugHubPeekRender()
+        case "debug.hub_arrival": return await debugHubArrival()
         #endif
         case "clipboard.list": return try await clipboardList(args)
         case "clipboard.get": return try await clipboardGet(args)
@@ -384,6 +385,20 @@ enum AgentBridgeRouter {
     }
     #endif
 
+    #if DEBUG
+    /// Debug builds only: whether the copy-arrival icon is up and what it borrows the slot
+    /// from, so an agent can check it when a screenshot can't see the notch.
+    @MainActor
+    private static func debugHubArrival() -> Payload {
+        let music = MusicManager.shared
+        return Payload(value: [
+            "showing": HubArrivalIndicator.shared.isShowing,
+            "music_strip": music.isPlaying || !music.isPlayerIdle,
+            "music_playing": music.isPlaying,
+        ])
+    }
+    #endif
+
     /// Unknown ids answer `removed: false` rather than an error, so a sync helper can
     /// retry a removal without special cases (hub contract `shelf.remove`).
     @MainActor
@@ -562,6 +577,9 @@ enum AgentBridgeRouter {
             // mcp.<client> source app. Protected entries never reach the pasteboard.
             if makeCurrent, !manager.isProtected(entry) {
                 manager.copy(entry)
+            }
+            if HubArrivalIndicator.isFromAnotherDevice(client: client) {
+                HubArrivalIndicator.shared.show()
             }
             return Payload(value: describe(entry, manager: manager))
         }

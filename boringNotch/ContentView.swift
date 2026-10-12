@@ -23,6 +23,7 @@ struct ContentView: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
+    @ObservedObject var arrival = HubArrivalIndicator.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var closeWatchTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
@@ -126,6 +127,12 @@ struct ContentView: View {
         glowPulse ? CGSize(width: 1.5, height: -1) : CGSize(width: -1.5, height: 1)
     }
 
+    /// The arrival icon on its own (no music strip to borrow the slot from). Checked after the
+    /// music branch everywhere it is used, so it only ever applies without music.
+    private var arrivalStripIsLive: Bool {
+        arrival.isShowing && !coordinator.expandingView.show && vm.notchState == .closed && !vm.hideOnClosed
+    }
+
     private var computedChinWidth: CGFloat {
         var chinWidth: CGFloat = vm.closedNotchSize.width
 
@@ -137,6 +144,8 @@ struct ContentView: View {
             && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle)
             && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed
         {
+            chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
+        } else if arrivalStripIsLive {
             chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
         } else if !coordinator.expandingView.show && vm.notchState == .closed
             && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace]
@@ -525,6 +534,18 @@ struct ContentView: View {
                                       )
                                   }
                               }
+                      } else if arrivalStripIsLive {
+                          ArrivalLiveActivity()
+                              .frame(alignment: .center)
+                              // Same reason as the music strip: a peek under it centres on this width.
+                              .background {
+                                  GeometryReader { proxy in
+                                      Color.clear.preference(
+                                          key: ClosedStripWidthKey.self,
+                                          value: proxy.size.width
+                                      )
+                                  }
+                              }
                       } else if !coordinator.expandingView.show && vm.notchState == .closed && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {
                           BoringFaceAnimation()
                        } else if vm.notchState == .open {
@@ -673,6 +694,29 @@ struct ContentView: View {
         )
     }
 
+    /// The closed strip with only the right-hand slot in use: the music strip's geometry
+    /// (empty where the artwork goes), so the icon lands exactly where the bars would be.
+    @ViewBuilder
+    func ArrivalLiveActivity() -> some View {
+        let side = max(0, vm.effectiveClosedNotchHeight - 12)
+
+        HStack {
+            Rectangle()
+                .fill(.clear)
+                .frame(width: side, height: side)
+            Rectangle()
+                .fill(.black)
+                .frame(width: vm.closedNotchSize.width + -cornerRadiusInsets.closed.top)
+            HStack {
+                if arrival.isShowing {
+                    HubArrivalIcon()
+                }
+            }
+            .frame(width: side, height: side, alignment: .center)
+        }
+        .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
+    }
+
     @ViewBuilder
     func MusicLiveActivity() -> some View {
         let artSide = max(0, vm.effectiveClosedNotchHeight - 12)
@@ -742,7 +786,10 @@ struct ContentView: View {
                 )
 
             HStack {
-                if useMusicVisualizer {
+                if arrival.isShowing {
+                    // A copy from another device borrows the slot for a moment.
+                    HubArrivalIcon()
+                } else if useMusicVisualizer {
                     Rectangle()
                         .fill(
                             playerColorTinting && Defaults[.coloredSpectrogram]

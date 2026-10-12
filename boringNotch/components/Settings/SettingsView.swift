@@ -1098,6 +1098,10 @@ struct ClipboardSettings: View {
                     Text("Ask before deleting an item")
                 }
                 .disabled(!enabled)
+
+                Defaults.Toggle(key: .showHubArrivalIcon) {
+                    Text("Flash an icon in the notch when a copy arrives from another device")
+                }
             } header: {
                 Text("General")
             }
