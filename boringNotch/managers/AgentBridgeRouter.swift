@@ -546,6 +546,9 @@ enum AgentBridgeRouter {
             throw BridgeError("Provide one of text, image_base64, or file_paths")
         }
         let pin = args.bool("pin") ?? false
+        // Hub contract `copy`: also make the entry the Mac's current clipboard (another
+        // device sent it to be pasted here).
+        let makeCurrent = args.bool("copy") ?? false
         let client = args.string("client").map { $0.isEmpty ? "agent" : $0 } ?? "agent"
 
         return try await MainActor.run {
@@ -553,6 +556,12 @@ enum AgentBridgeRouter {
             let manager = ClipboardManager.shared
             guard let entry = manager.addFromAgent(input, pin: pin, sourceApp: "mcp.\(client)") else {
                 throw BridgeError("Nothing usable to add (empty text or unreadable image)")
+            }
+            // Same write as picking an entry in the history: it claims the pasteboard's
+            // change count, so the monitor doesn't record it again and the entry keeps its
+            // mcp.<client> source app. Protected entries never reach the pasteboard.
+            if makeCurrent, !manager.isProtected(entry) {
+                manager.copy(entry)
             }
             return Payload(value: describe(entry, manager: manager))
         }
