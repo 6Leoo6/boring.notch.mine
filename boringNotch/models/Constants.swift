@@ -216,6 +216,8 @@ extension Defaults.Keys {
     static let expandedDragDetection = Key<Bool>("expandedDragDetection", default: true)
     /// Peek below the island when something arrives on the shelf from another device (hub).
     static let showHubArrivals = Key<Bool>("showHubArrivals", default: true)
+    /// Icon in the closed island's right slot when a copy or a file arrives from another device (hub).
+    static let showHubArrivalIcon = Key<Bool>("showHubArrivalIcon", default: true)
     
     // MARK: Clipboard
     static let clipboardHistoryEnabled = Key<Bool>("clipboardHistoryEnabled", default: true)

@@ -257,6 +257,10 @@ enum AgentBridgeRouter {
             // delivering another device's share. `from` / `from_kind` name the sender when
             // the caller knows it (optional; the peek says "On your shelf" without them).
             HubActivity.shared.arrived(stored, from: args.string("from"), fromKind: args.string("from_kind"))
+            // The hub helper names the sender; a local agent's put doesn't, and isn't an arrival.
+            if args.string("from") != nil || args.string("from_kind") != nil {
+                HubArrivalIndicator.shared.show(.file)
+            }
             return Payload(value: [
                 "id": stored.id.uuidString,
                 "name": stored.displayName,
@@ -562,6 +566,9 @@ enum AgentBridgeRouter {
             // mcp.<client> source app. Protected entries never reach the pasteboard.
             if makeCurrent, !manager.isProtected(entry) {
                 manager.copy(entry)
+            }
+            if HubArrivalIndicator.isFromAnotherDevice(client: client) {
+                HubArrivalIndicator.shared.show(.clipboard)
             }
             return Payload(value: describe(entry, manager: manager))
         }

@@ -987,6 +987,9 @@ struct Shelf: View {
                 Defaults.Toggle(key: .showHubArrivals) {
                     Text("Show when files arrive")
                 }
+                Defaults.Toggle(key: .showHubArrivalIcon) {
+                    Text("Flash an icon in the notch when a copy or a file arrives from another device")
+                }
 
             } header: {
                 HStack {
