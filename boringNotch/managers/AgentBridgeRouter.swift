@@ -270,7 +270,9 @@ enum AgentBridgeRouter {
     #if DEBUG
     /// Tower tab with a pretend server (`FakeTowerBackend`), so agents can see every state
     /// without powering on real hardware. `scenario` "real" goes back to the server; `open`
-    /// opens the notch on the Tower tab; `boot` (omarchy|windows) taps Wake/Windows.
+    /// opens the notch on the Tower tab; `boot` (omarchy|windows) taps Wake/Windows;
+    /// `shutdown` "ask" taps Shut down once, "poweroff"|"reboot" confirms it (D-146);
+    /// `off_timeout` (s) shortens the wait for the tower to go off.
     @MainActor
     private static func debugTower(_ args: Args) -> Payload {
         let scenario = args.string("scenario") ?? "off"
@@ -282,6 +284,21 @@ enum AgentBridgeRouter {
         if let os = args.string("boot").flatMap(HubRPC.PowerBootParamsOS.init(rawValue:)) {
             guard scenario != "real" else { return Payload(value: ["booted": false, "why": "never against the real server from here"]) }
             TowerModel.shared.boot(os)
+        }
+        TowerModel.offTimeout = (args.raw["off_timeout"] as? NSNumber)?.doubleValue ?? 60
+        if let step = args.string("shutdown") {
+            guard scenario != "real" else { return Payload(value: ["shut_down": false, "why": "never against the real server from here"]) }
+            let model = TowerModel.shared
+            Task { @MainActor in
+                // useBackend just started over: wait for the fake's first state.
+                for _ in 0..<20 where model.power == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                if step == "ask" {
+                    model.askToShutDown()
+                } else if let mode = HubRPC.PowerOffParamsMode(rawValue: step) {
+                    model.askToShutDown()
+                    model.shutDown(mode)
+                }
+            }
         }
         return Payload(value: ["scenario": scenario, "tab_enabled": TowerModel.tabEnabled])
     }
@@ -394,6 +411,9 @@ enum AgentBridgeRouter {
             "requested": model.requested?.rawValue ?? NSNull(),
             "request_error": model.requestError ?? NSNull(),
             "booting": model.isBooting,
+            "confirming_off": model.confirmingOff,
+            "stopping": model.stopping?.rawValue ?? NSNull(),
+            "off_error": model.offError ?? NSNull(),
         ]
         if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
            let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) {

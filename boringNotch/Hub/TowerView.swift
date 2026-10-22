@@ -4,7 +4,7 @@
 //
 //  The open notch's Tower tab (remote wake, hub D-145): what the tower is doing, Wake
 //  (into Omarchy) and Windows, the steps of a boot while it runs, and why it didn't
-//  start with Retry. Words follow the hub's docs/BRAND.md: name the device, say what
+//  start with Retry; Shut down (or Restart) after a second step, D-146. Words follow the hub's docs/BRAND.md: name the device, say what
 //  happened and what to do next.
 //
 
@@ -25,6 +25,8 @@ struct TowerView: View {
         .animation(.smooth(duration: 0.3), value: model.power)
         .animation(.smooth(duration: 0.3), value: model.problem)
         .animation(.smooth(duration: 0.3), value: model.requested)
+        .animation(.smooth(duration: 0.3), value: model.confirmingOff)
+        .animation(.smooth(duration: 0.3), value: model.stopping)
         .onAppear { model.appeared() }
         .onDisappear { model.disappeared() }
     }
@@ -35,6 +37,12 @@ struct TowerView: View {
     private var content: some View {
         if let problem = model.problem {
             problemRow(problem)
+        } else if let mode = model.stopping {
+            stoppingRow(mode)
+        } else if let error = model.offError {
+            failureRow(title: "Tower didn't shut down", detail: error, retry: false)
+        } else if model.confirmingOff, model.canShutDown, let power = model.power {
+            confirmRow(power)
         } else if model.isBooting {
             bootingRows
         } else if let error = model.requestError {
@@ -61,8 +69,10 @@ struct TowerView: View {
                 switch power.state {
                 case .omarchy:
                     TowerButton(title: "Switch to Windows", glyph: "hub.windows", primary: false) { model.boot(.windows) }
+                    TowerButton(title: "Shut down", glyph: "hub.power", primary: false) { model.askToShutDown() }
                 case .windows:
                     TowerButton(title: "Switch to Omarchy", glyph: "hub.tower", primary: false) { model.boot(.omarchy) }
+                    TowerButton(title: "Shut down", glyph: "hub.power", primary: false) { model.askToShutDown() }
                 default:
                     TowerButton(title: "Windows", glyph: "hub.windows", primary: false) { model.boot(.windows) }
                         .disabled(relayDown && needsRelay)
@@ -92,21 +102,57 @@ struct TowerView: View {
         }
     }
 
-    private func failureRow(title: String, detail: String) -> some View {
+    private func failureRow(title: String, detail: String, retry: Bool = true) -> some View {
         row(glyph: "hub.error", tint: .white, title: title, detail: detail, caption: nil) {
             HStack(spacing: 8) {
-                TowerButton(title: "Dismiss", glyph: nil, primary: false) {
-                    if model.requestError != nil {
+                TowerButton(title: "Dismiss", glyph: nil, primary: !retry) {
+                    if model.requestError != nil || model.offError != nil {
                         model.dismissError()
                     } else {
                         dismissedFailure = model.power?.started ?? ""
                     }
                 }
-                TowerButton(title: "Retry", glyph: "hub.sync", primary: true) {
-                    dismissedFailure = nil
-                    model.retry()
+                if retry {
+                    TowerButton(title: "Retry", glyph: "hub.sync", primary: true) {
+                        dismissedFailure = nil
+                        model.retry()
+                    }
                 }
             }
+        }
+    }
+
+    /// The second step before power.off: the owner asked for a confirmation (D-146).
+    private func confirmRow(_ power: HubRPC.PowerStateResult) -> some View {
+        let os = TowerModel.osName(power.state.rawValue) ?? "its OS"
+        return row(glyph: "hub.power", tint: .white, title: "Shut down the tower?",
+                   detail: "\(os) closes. Anything unsaved there is lost.",
+                   caption: nil) {
+            HStack(spacing: 8) {
+                TowerButton(title: "Cancel", glyph: nil, primary: false) { model.cancelShutDown() }
+                TowerButton(title: "Restart", glyph: "hub.sync", primary: false) { model.shutDown(.reboot) }
+                TowerButton(title: "Shut down", glyph: "hub.power", primary: true) { model.shutDown(.poweroff) }
+            }
+        }
+    }
+
+    private func stoppingRow(_ mode: HubRPC.PowerOffParamsMode) -> some View {
+        let state = model.power?.state
+        let detail: String
+        switch (mode, state) {
+        case (_, .omarchy?), (_, .windows?):
+            detail = "Asked \(TowerModel.osName(state?.rawValue) ?? "the tower") to close"
+        case (.reboot, .locked?):
+            detail = "Waiting for the disk unlock"
+        case (.reboot, _):
+            detail = "Down, waiting for it to come back"
+        default:
+            detail = "Closing down, not answering any more"
+        }
+        return row(glyph: mode == .reboot ? "hub.sync" : "hub.power", tint: .white,
+                   title: mode == .reboot ? "Restarting…" : "Shutting down…",
+                   detail: detail, caption: "Started from this Mac") {
+            ProgressView().controlSize(.small)
         }
     }
 
