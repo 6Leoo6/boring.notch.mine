@@ -86,7 +86,7 @@ struct TowerView: View {
                 title: "Starting \(os)",
                 detail: model.requested != nil ? "Asking the server" : (power?.detail ?? steps[current].active),
                 caption: eta) {
-                ProgressView().controlSize(.small)
+                EmptyView() // the current step pulses below
             }
             TowerSteps(steps: steps.map(\.label), current: current)
         }

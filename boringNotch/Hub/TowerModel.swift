@@ -189,10 +189,15 @@ final class TowerModel: ObservableObject {
             return (.noHelper(failure.message), failure.message)
         case .rpc(let code):
             let text = failure.message.lowercased()
-            if text.contains("not paired") { return (.notPaired, failure.message) }
+            if text.contains("not paired") || (code == "module_disabled" && text.contains("\"peer\"")) {
+                return (.notPaired, failure.message)
+            }
             // Until the server runs the power module: "unavailable … not implemented yet";
             // an older server says unknown_method or module_disabled.
-            if code == "unknown_method" || code == "module_disabled"
+            // Only the server's own answers count (peer.call prefixes them with "server: "):
+            // a disabled peer module here is this Mac's problem, not the server's.
+            let fromServer = text.hasPrefix(serverDevice + ": ")
+            if fromServer, code == "unknown_method" || code == "module_disabled"
                 || (code == "unavailable" && text.contains("not implemented")) {
                 return (.notSetUp, failure.message)
             }
