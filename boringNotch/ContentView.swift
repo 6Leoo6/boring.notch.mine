@@ -617,6 +617,8 @@ struct ContentView: View {
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
                     case .shelf:
                         ShelfView()
+                    case .tower:
+                        TowerView()
                     }
                 }
                 .transition(
@@ -1072,7 +1074,7 @@ struct ContentView: View {
 
     private func cycleTab(forward: Bool) {
         if Defaults[.enableHaptics] { haptics.toggle() }
-        let tabs: [NotchViews] = [.home, .shelf]
+        let tabs: [NotchViews] = notchTabs().map(\.view)
         guard let idx = tabs.firstIndex(of: coordinator.currentView) else { return }
         let next = forward
             ? (idx + 1) % tabs.count

@@ -18,6 +18,9 @@
 	<array>
 		<string>/.config/boringnotch/</string>
 	</array>
+	<!-- Where the helper shares its own token with the notch (towerbridge notchtoken.go):
+	     ~/.config/boringnotch/hub/<bundle id>.json. The notch calls the helper with it
+	     (peer.call for remote wake, hub D-145). -->
 	<!-- The inbox (hub D-142): files other devices send are saved in ~/Documents/Hub
 	     (macOS asks once whether "hub helper" may access the Documents folder). The
 	     second is the agents' test inbox for the dev helper (setting transfer.inbox). -->
@@ -25,6 +28,7 @@
 	<array>
 		<string>/Documents/Hub/</string>
 		<string>/.local/share/hub-dev/inbox/</string>
+		<string>/.config/boringnotch/hub/</string>
 	</array>
 </dict>
 </plist>

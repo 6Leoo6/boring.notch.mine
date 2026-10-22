@@ -216,6 +216,8 @@ extension Defaults.Keys {
     static let expandedDragDetection = Key<Bool>("expandedDragDetection", default: true)
     /// Peek below the island when something arrives on the shelf from another device (hub).
     static let showHubArrivals = Key<Bool>("showHubArrivals", default: true)
+    /// The Tower tab: wake the tower into Omarchy or Windows through the hub (D-145).
+    static let showTowerTab = Key<Bool>("showTowerTab", default: true)
     
     // MARK: Clipboard
     static let clipboardHistoryEnabled = Key<Bool>("clipboardHistoryEnabled", default: true)

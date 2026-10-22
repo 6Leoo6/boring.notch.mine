@@ -42,7 +42,9 @@ public enum HubRPC {
         case notificationsList = "notifications.list"
         case peekShow = "peek.show"
         case peerCall = "peer.call"
+        case peerEndpoints = "peer.endpoints"
         case peerList = "peer.list"
+        case peerPing = "peer.ping"
         case powerBoot = "power.boot"
         case powerState = "power.state"
         case powerWake = "power.wake"
@@ -94,7 +96,9 @@ public enum HubRPC {
             case .notificationsList: return "notifications"
             case .peekShow: return "peek"
             case .peerCall: return "peer"
+            case .peerEndpoints: return "peer"
             case .peerList: return "peer"
+            case .peerPing: return "peer"
             case .powerBoot: return "power"
             case .powerState: return "power"
             case .powerWake: return "power"
@@ -229,6 +233,31 @@ public enum HubRPC {
         case unknown = "unknown"
     }
 
+    /// auto (default): direct first when the target advertises it and it worked lately, else the hub. direct/hub force one path (tests, measurements).
+    public enum PeerCallParamsPath: String, Codable, CaseIterable, Hashable, Sendable {
+        case auto = "auto"
+        case direct = "direct"
+        case hub = "hub"
+    }
+
+    /// How the call went: the target's direct listener over the tailnet, or the hub relay.
+    public enum PeerCallResultPath: String, Codable, CaseIterable, Hashable, Sendable {
+        case direct = "direct"
+        case hub = "hub"
+    }
+
+    /// auto (default): direct when it works, else the hub. direct fails when there is no direct path instead of falling back.
+    public enum PeerPingParamsPath: String, Codable, CaseIterable, Hashable, Sendable {
+        case auto = "auto"
+        case direct = "direct"
+        case hub = "hub"
+    }
+
+    public enum PeerPingResultPath: String, Codable, CaseIterable, Hashable, Sendable {
+        case direct = "direct"
+        case hub = "hub"
+    }
+
     public enum PowerBootParamsOS: String, Codable, CaseIterable, Hashable, Sendable {
         case omarchy = "omarchy"
         case windows = "windows"
@@ -242,6 +271,23 @@ public enum HubRPC {
         case omarchy = "omarchy"
         case suspended = "suspended"
         case unknown = "unknown"
+    }
+
+    /// Progress of the last power.boot (D-145): idle (none yet), waking (magic packet sent, waiting for the tower), unlocking (disk unlock or one-time Windows boot over the pre-boot SSH), starting (the OS is coming up), switching (asked the running OS to reboot into the other one), done, failed. done/failed stay until the next power.boot.
+    public enum PowerStateResultPhase: String, Codable, CaseIterable, Hashable, Sendable {
+        case idle = "idle"
+        case waking = "waking"
+        case unlocking = "unlocking"
+        case starting = "starting"
+        case switching = "switching"
+        case done = "done"
+        case failed = "failed"
+    }
+
+    /// OS the last power.boot asked for.
+    public enum PowerStateResultTarget: String, Codable, CaseIterable, Hashable, Sendable {
+        case omarchy = "omarchy"
+        case windows = "windows"
     }
 
     public enum ShelfKind: String, Codable, CaseIterable, Hashable, Sendable {
@@ -377,15 +423,18 @@ public enum HubRPC {
 
     /// Exactly one of text, image_base64 (any decodable image) or file_paths (non-empty, absolute) is used, checked in that order; none gives invalid_params. The notch validates these before checking whether clipboard history is on.
     public struct ClipboardAddParams: Codable, Hashable, Sendable {
-        /// Caller name; the entry's source_app becomes "mcp.<client>" (empty or missing: mcp.agent). The hub sync-helper sends "hub" and skips mcp.hub entries.
+        /// Caller name; the entry's source_app becomes "mcp.<client>" (empty or missing: mcp.agent). A device pushing its copies through the hub sends "hub-<its device id>" (so source_app mcp.hub-<id> says where the entry came from) and never sends on entries whose source_app starts with mcp.hub, which stops echoes.
         public var client: String?
+        /// Also make the entry this device's current clipboard (macOS pasteboard, Wayland selection). The receiver must not record that write as a new local copy or push it on: the entry keeps its source_app (mcp.<client>). Never done for a protected entry. Receivers that predate this field ignore it and only add to history.
+        public var copy: Bool?
         public var filePaths: [String]?
         public var imageBase64: Data?
         public var pin: Bool?
         public var text: String?
 
-        public init(client: String? = nil, filePaths: [String]? = nil, imageBase64: Data? = nil, pin: Bool? = nil, text: String? = nil) {
+        public init(client: String? = nil, copy: Bool? = nil, filePaths: [String]? = nil, imageBase64: Data? = nil, pin: Bool? = nil, text: String? = nil) {
             self.client = client
+            self.copy = copy
             self.filePaths = filePaths
             self.imageBase64 = imageBase64
             self.pin = pin
@@ -394,6 +443,7 @@ public enum HubRPC {
 
         enum CodingKeys: String, CodingKey {
             case client
+            case copy
             case filePaths = "file_paths"
             case imageBase64 = "image_base64"
             case pin
@@ -1296,12 +1346,15 @@ public enum HubRPC {
         public var device: String
         public var method: String
         public var params: [String: JSONValue]?
+        /// auto (default): direct first when the target advertises it and it worked lately, else the hub. direct/hub force one path (tests, measurements).
+        public var path: PeerCallParamsPath?
         public var timeoutMs: Int64?
 
-        public init(device: String, method: String, params: [String: JSONValue]? = nil, timeoutMs: Int64? = nil) {
+        public init(device: String, method: String, params: [String: JSONValue]? = nil, path: PeerCallParamsPath? = nil, timeoutMs: Int64? = nil) {
             self.device = device
             self.method = method
             self.params = params
+            self.path = path
             self.timeoutMs = timeoutMs
         }
 
@@ -1309,16 +1362,72 @@ public enum HubRPC {
             case device
             case method
             case params
+            case path
             case timeoutMs = "timeout_ms"
         }
     }
 
     public struct PeerCallResult: Codable, Hashable, Sendable {
+        /// How the call went: the target's direct listener over the tailnet, or the hub relay.
+        public var path: PeerCallResultPath?
         /// The remote method's result.
         public var result: [String: JSONValue]
 
-        public init(result: [String: JSONValue]) {
+        public init(path: PeerCallResultPath? = nil, result: [String: JSONValue]) {
+            self.path = path
             self.result = result
+        }
+    }
+
+    public struct PeerEndpointsResult: Codable, Hashable, Sendable {
+        /// Methods this device accepts as a binary frame (the big field as raw bytes after a JSON header, inside the box), on either path. Today transfer.chunk (field data_base64).
+        public var binary: [String]
+        /// host:port of the direct listener, tailnet addresses only (100.64.0.0/10, fd7a:115c:a1e0::/48; loopback in the simulator). POST /peer there with the sealed request (docs/TRANSFER.md section 9). Empty when the listener is off.
+        public var direct: [String]
+        /// Largest sealed request body the direct listener reads; bigger calls go through the hub.
+        public var maxDirectBytes: Int64
+
+        public init(binary: [String], direct: [String], maxDirectBytes: Int64) {
+            self.binary = binary
+            self.direct = direct
+            self.maxDirectBytes = maxDirectBytes
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case binary
+            case direct
+            case maxDirectBytes = "max_direct_bytes"
+        }
+    }
+
+    public struct PeerPingParams: Codable, Hashable, Sendable {
+        public var device: String
+        /// auto (default): direct when it works, else the hub. direct fails when there is no direct path instead of falling back.
+        public var path: PeerPingParamsPath?
+
+        public init(device: String, path: PeerPingParamsPath? = nil) {
+            self.device = device
+            self.path = path
+        }
+    }
+
+    public struct PeerPingResult: Codable, Hashable, Sendable {
+        /// The target's advertised direct endpoints (host:port), empty when it has none.
+        public var direct: [String]
+        public var path: PeerPingResultPath
+        /// Sealed round trip, milliseconds.
+        public var rttMs: Int64
+
+        public init(direct: [String], path: PeerPingResultPath, rttMs: Int64) {
+            self.direct = direct
+            self.path = path
+            self.rttMs = rttMs
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case direct
+            case path
+            case rttMs = "rtt_ms"
         }
     }
 
@@ -1375,13 +1484,70 @@ public enum HubRPC {
         }
     }
 
-    public struct PowerStateResult: Codable, Hashable, Sendable {
-        public var since: String?
-        public var state: PowerState
+    /// The ESP32 wake relay on the home LAN, as the server sees it (D-145).
+    public struct PowerRelay: Codable, Hashable, Sendable {
+        public var lastSeen: String?
+        /// Connected to the server now.
+        public var online: Bool
+        /// Wi-Fi signal, dBm.
+        public var rssi: Int64?
+        /// Relay firmware version.
+        public var version: String?
 
-        public init(since: String? = nil, state: PowerState) {
+        public init(lastSeen: String? = nil, online: Bool, rssi: Int64? = nil, version: String? = nil) {
+            self.lastSeen = lastSeen
+            self.online = online
+            self.rssi = rssi
+            self.version = version
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case lastSeen = "last_seen"
+            case online
+            case rssi
+            case version
+        }
+    }
+
+    public struct PowerStateResult: Codable, Hashable, Sendable {
+        /// One short line for UIs, e.g. "Unlocking the disk".
+        public var detail: String?
+        /// Why the last power.boot failed (phase failed).
+        public var error: String?
+        /// Rough seconds left while a power.boot runs.
+        public var etaSeconds: Int64?
+        /// Progress of the last power.boot (D-145): idle (none yet), waking (magic packet sent, waiting for the tower), unlocking (disk unlock or one-time Windows boot over the pre-boot SSH), starting (the OS is coming up), switching (asked the running OS to reboot into the other one), done, failed. done/failed stay until the next power.boot.
+        public var phase: PowerStateResultPhase?
+        public var relay: PowerRelay?
+        public var since: String?
+        /// When the last power.boot started.
+        public var started: String?
+        public var state: PowerState
+        /// OS the last power.boot asked for.
+        public var target: PowerStateResultTarget?
+
+        public init(detail: String? = nil, error: String? = nil, etaSeconds: Int64? = nil, phase: PowerStateResultPhase? = nil, relay: PowerRelay? = nil, since: String? = nil, started: String? = nil, state: PowerState, target: PowerStateResultTarget? = nil) {
+            self.detail = detail
+            self.error = error
+            self.etaSeconds = etaSeconds
+            self.phase = phase
+            self.relay = relay
             self.since = since
+            self.started = started
             self.state = state
+            self.target = target
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case detail
+            case error
+            case etaSeconds = "eta_seconds"
+            case phase
+            case relay
+            case since
+            case started
+            case state
+            case target
         }
     }
 
@@ -1558,7 +1724,7 @@ public enum HubRPC {
         public var missing: Bool?
         /// Display name: the file name, the trimmed text, or the URL without http(s)://.
         public var name: String
-        /// Absolute path of the user's own file (non-temporary file items only).
+        /// Absolute path of the file (non-temporary file items only: a file the user dropped, or a received file in the inbox folder, ~/Documents/Hub, D-142).
         public var path: String?
         /// First 200 characters, followed by an ellipsis when cut.
         public var preview: String?
@@ -1605,7 +1771,7 @@ public enum HubRPC {
         }
     }
 
-    /// Exactly one of text, url, or data_base64 (+ optional file_name) is used, checked in that order; none gives invalid_params. text must be non-empty; url must be absolute with a scheme and not file:. file_name is reduced to its last /-component and trimmed; empty, . or .. become "file". Uploaded files are always temporary.
+    /// Exactly one of text, url, path, or data_base64 (+ optional file_name) is used, checked in that order; none gives invalid_params. text must be non-empty; url must be absolute with a scheme and not file:. file_name is reduced to its last /-component and trimmed; empty, . or .. become "file". Uploaded files (data_base64) are temporary; a file put by path is not (removing the item leaves the file).
     public struct ShelfPutParams: Codable, Hashable, Sendable {
         public var dataBase64: Data?
         public var fileName: String?
@@ -1613,14 +1779,17 @@ public enum HubRPC {
         public var from: String?
         /// Kind of that device for its icon: tower, mac, phone, server (Device.kind), or windows for the tower running Windows. Optional, set together with from.
         public var fromKind: String?
+        /// Absolute path of a regular file already on the receiving device, put on the shelf by reference: not temporary, removing the item never deletes the file, deduplicated by path. Accepted only from the device itself (its local /rpc, or the Mac helper handing over a received file from the inbox folder, ~/Documents/Hub); towerbridge refuses it on a call relayed from another device (invalid_params) and the Mac helper strips it from the shelf.put calls it forwards (D-142).
+        public var path: String?
         public var text: String?
         public var url: String?
 
-        public init(dataBase64: Data? = nil, fileName: String? = nil, from: String? = nil, fromKind: String? = nil, text: String? = nil, url: String? = nil) {
+        public init(dataBase64: Data? = nil, fileName: String? = nil, from: String? = nil, fromKind: String? = nil, path: String? = nil, text: String? = nil, url: String? = nil) {
             self.dataBase64 = dataBase64
             self.fileName = fileName
             self.from = from
             self.fromKind = fromKind
+            self.path = path
             self.text = text
             self.url = url
         }
@@ -1630,6 +1799,7 @@ public enum HubRPC {
             case fileName = "file_name"
             case from
             case fromKind = "from_kind"
+            case path
             case text
             case url
         }
@@ -1813,6 +1983,7 @@ public enum HubRPC {
     }
 
     public struct TransferChunkParams: Codable, Hashable, Sendable {
+        /// The chunk's bytes. Empty ("") when the call is a binary frame and the bytes travel raw after its header: only to receivers listing transfer.chunk in peer.endpoints binary (docs/TRANSFER.md section 9).
         public var dataBase64: Data
         public var index: Int64
         /// This chunk's bytes, lowercase hex. A mismatch is invalid_params and the chunk is not stored (send it again).

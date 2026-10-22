@@ -63,6 +63,7 @@ enum AgentBridgeRouter {
         #if DEBUG
         case "debug.hub_peek": return await debugHubPeek(args)
         case "debug.hub_peek_render": return await debugHubPeekRender()
+        case "debug.tower": return await debugTower(args)
         #endif
         case "clipboard.list": return try await clipboardList(args)
         case "clipboard.get": return try await clipboardGet(args)
@@ -266,6 +267,24 @@ enum AgentBridgeRouter {
     }
 
     #if DEBUG
+    /// Tower tab with a pretend server (`FakeTowerBackend`), so agents can see every state
+    /// without powering on real hardware. `scenario` "real" goes back to the server; `open`
+    /// opens the notch on the Tower tab; `boot` (omarchy|windows) taps Wake/Windows.
+    @MainActor
+    private static func debugTower(_ args: Args) -> Payload {
+        let scenario = args.string("scenario") ?? "off"
+        TowerModel.shared.useBackend(scenario == "real" ? nil : FakeTowerBackend(scenario: scenario))
+        if args.raw["open"] as? Bool == true, let delegate = NSApp.delegate as? AppDelegate {
+            BoringViewCoordinator.shared.currentView = .tower
+            delegate.vm.open()
+        }
+        if let os = args.string("boot").flatMap(HubRPC.PowerBootParamsOS.init(rawValue:)) {
+            guard scenario != "real" else { return Payload(value: ["booted": false, "why": "never against the real server from here"]) }
+            TowerModel.shared.boot(os)
+        }
+        return Payload(value: ["scenario": scenario, "tab_enabled": TowerModel.tabEnabled])
+    }
+
     /// Debug builds only: previews the hub peek without another device. `mode` "transfer"
     /// (default) runs fake progress over `seconds` for `size` bytes, then lands; "fail" stops
     /// at 60%; "arrival" shows a finished arrival for the newest shelf item.
