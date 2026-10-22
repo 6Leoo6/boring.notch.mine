@@ -64,6 +64,7 @@ enum AgentBridgeRouter {
         case "debug.hub_peek": return await debugHubPeek(args)
         case "debug.hub_peek_render": return await debugHubPeekRender()
         case "debug.tower": return await debugTower(args)
+        case "debug.tower_render": return await debugTowerRender()
         #endif
         case "clipboard.list": return try await clipboardList(args)
         case "clipboard.get": return try await clipboardGet(args)
@@ -375,6 +376,32 @@ enum AgentBridgeRouter {
     /// Debug builds only: the hub peek as it is drawn right now, rendered off screen on the
     /// island's black (PNG, 2x). For checks while the screen is locked or asleep, when the
     /// window server keeps showing a stale frame and screenshots can't see the notch.
+    /// The Tower tab drawn offscreen at the open notch's content size (PNG, 2x), plus what the
+    /// model holds: for checks while the notch is hidden (full-screen app) or the owner is busy.
+    @MainActor
+    private static func debugTowerRender() -> Payload {
+        let model = TowerModel.shared
+        let view = TowerView()
+            .frame(width: 640, height: 120)
+            .background(Color.black)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        var out: [String: Any] = [
+            "problem": model.problem.map { "\($0)" } ?? NSNull(),
+            "state": model.power?.state.rawValue ?? NSNull(),
+            "phase": model.power?.phase?.rawValue ?? NSNull(),
+            "detail": model.power?.detail ?? NSNull(),
+            "requested": model.requested?.rawValue ?? NSNull(),
+            "request_error": model.requestError ?? NSNull(),
+            "booting": model.isBooting,
+        ]
+        if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) {
+            out["png_base64"] = png.base64EncodedString()
+        }
+        return Payload(value: out)
+    }
+
     @MainActor
     private static func debugHubPeekRender() -> Payload {
         let activity = HubActivity.shared
