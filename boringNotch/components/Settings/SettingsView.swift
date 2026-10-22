@@ -987,6 +987,9 @@ struct Shelf: View {
                 Defaults.Toggle(key: .showHubArrivals) {
                     Text("Show when files arrive")
                 }
+                Defaults.Toggle(key: .showTowerTab) {
+                    Text("Show the Tower tab (wake the tower through the hub)")
+                }
 
             } header: {
                 HStack {

@@ -88,6 +88,7 @@ struct HubPeekView: View {
 
     /// The sender's device glyph from the hub icon set; the shelf glyph when the kind is unknown.
     static func glyph(for item: HubActivity.Item) -> String {
+        if let glyph = item.glyph { return glyph }
         switch item.fromKind {
         case "tower", "mac", "phone", "server", "windows": return "hub." + item.fromKind!
         default: return "hub.shelf"
@@ -95,6 +96,7 @@ struct HubPeekView: View {
     }
 
     private func subtitle(for item: HubActivity.Item) -> String {
+        if let note = item.note { return note }
         let from = item.from.map { "from \($0)" }
         switch item.phase {
         case .receiving:

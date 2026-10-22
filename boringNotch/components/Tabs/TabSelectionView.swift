@@ -7,25 +7,37 @@
 
 import SwiftUI
 
+import Defaults
+
 struct TabModel: Identifiable {
-    let id = UUID()
+    var id: String { label }
     let label: String
     let icon: String
     let view: NotchViews
+    var asset: Bool = false
 }
 
-let tabs = [
-    TabModel(label: "Home", icon: "house.fill", view: .home),
-    TabModel(label: "Shelf", icon: "tray.fill", view: .shelf)
-]
+/// The tabs the header shows, in order: the shelf when it is on, the Tower (hub D-145)
+/// when this build carries the hub helper and the user didn't turn it off.
+@MainActor
+func notchTabs() -> [TabModel] {
+    var list = [TabModel(label: "Home", icon: "house.fill", view: .home)]
+    if Defaults[.boringShelf] {
+        list.append(TabModel(label: "Shelf", icon: "tray.fill", view: .shelf))
+    }
+    if TowerModel.tabEnabled {
+        list.append(TabModel(label: "Tower", icon: "hub.tower", view: .tower, asset: true))
+    }
+    return list
+}
 
 struct TabSelectionView: View {
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     @Namespace var animation
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(tabs) { tab in
-                    TabButton(label: tab.label, icon: tab.icon, selected: coordinator.currentView == tab.view) {
+            ForEach(notchTabs()) { tab in
+                    TabButton(label: tab.label, icon: tab.icon, selected: coordinator.currentView == tab.view, asset: tab.asset) {
                         withAnimation(.smooth) {
                             coordinator.currentView = tab.view
                         }

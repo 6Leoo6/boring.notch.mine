@@ -56,6 +56,22 @@ enum HubHelper {
 
     static var isEmbedded: Bool { variant != nil }
 
+    /// Where the helper shares its token with this app: towerbridge writes a copy of its
+    /// token file to <real home>/.config/boringnotch/hub/<label>.json (its own is inside its
+    /// container, out of this sandbox's reach). The notch reads it to call the helper, e.g.
+    /// `peer.call` for remote wake (hub D-145). Nil when this build has no helper.
+    static var shareTokenURL: URL? {
+        guard let v = variant else { return nil }
+        let home: String
+        if let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir {
+            home = String(cString: dir)
+        } else {
+            home = NSHomeDirectory()
+        }
+        return URL(fileURLWithPath: home, isDirectory: true)
+            .appendingPathComponent(".config/boringnotch/hub/\(v.label).json")
+    }
+
     private static func service(_ v: Variant) -> SMAppService { SMAppService.agent(plistName: v.plistName) }
 
     private static func helperExecutable(_ v: Variant) -> URL {

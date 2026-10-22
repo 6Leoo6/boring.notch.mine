@@ -27,6 +27,8 @@ public enum NotchState {
 public enum NotchViews {
     case home
     case shelf
+    /// Remote wake for the tower (hub D-145); only with the hub helper embedded.
+    case tower
 }
 
 public enum ShelfPanel: String, Defaults.Serializable {

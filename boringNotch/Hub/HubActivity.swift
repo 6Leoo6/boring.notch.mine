@@ -50,6 +50,10 @@ final class HubActivity: ObservableObject {
         var stalled: Bool = false
         /// The shelf item this became, once known.
         var shelfID: String?
+        /// A note that isn't an arrival (remote wake, D-145): replaces the subtitle.
+        var note: String?
+        /// Hub icon to show instead of the sender's glyph.
+        var glyph: String?
 
         var fraction: Double? {
             guard size > 0 else { return nil }
@@ -121,6 +125,21 @@ final class HubActivity: ObservableObject {
             shelfID: shelfID
         )
         loadIcon(for: shelfItem)
+        present(for: Self.arrivalDuration)
+    }
+
+    // MARK: - Tower (remote wake, D-145)
+
+    /// A boot this Mac asked for ended (`TowerModel`): one line in the closed notch, the
+    /// same peek as an arrival. Not shown while the notch is open: the Tower tab says it.
+    func towerFinished(title: String, subtitle: String, glyph: String, failed: Bool) {
+        guard enabled else { return }
+        let delegate = NSApp.delegate as? AppDelegate
+        if delegate?.vm.notchState == .open { return }
+        iconTask?.cancel()
+        icon = nil
+        item = Item(id: "tower-" + UUID().uuidString, name: title, fromKind: "tower",
+                    phase: failed ? .failed : .arrived, isFile: false, note: subtitle, glyph: glyph)
         present(for: Self.arrivalDuration)
     }
 
