@@ -263,7 +263,8 @@ final class TowerModel: ObservableObject {
                                                  glyph: "hub.power", failed: false)
             } else if elapsed > Self.offTimeout {
                 stopping = nil
-                offError = "The tower is still \(Self.stateTitle(state.state).lowercased()) after \(Int(Self.offTimeout)) s. Something there may be holding up the shutdown."
+                let now = Self.osName(state.state.rawValue).map { "on \($0)" } ?? Self.stateTitle(state.state).lowercased()
+                offError = "The tower is still \(now) after \(Int(Self.offTimeout)) s. Something there may be holding up the shutdown."
             }
         case .reboot:
             if sawDown, on.contains(state.state) || state.state == .locked {
