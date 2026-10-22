@@ -233,7 +233,7 @@ final class TowerModel: ObservableObject {
     // MARK: - Backend
 
     /// The real server, or a stand-in for agent tests (DEBUG `debug.tower`).
-    protocol Backend {
+    protocol Backend: Sendable {
         func state() async throws -> Data
         func boot(_ os: HubRPC.PowerBootParamsOS) async throws -> Data
     }
@@ -273,8 +273,7 @@ final class TowerModel: ObservableObject {
 /// Scenarios: off, omarchy, windows, locked, relay_offline, not_set_up, failed, booting.
 /// A boot runs waking 6 s, unlocking 2 s, starting 6 s (switching 3 s from a running OS),
 /// and fails at unlocking when the scenario is `fail_boot`.
-final class FakeTowerBackend: TowerModel.Backend, @unchecked Sendable {
-    private let lock = NSLock()
+actor FakeTowerBackend: TowerModel.Backend {
     private var scenario: String
     private var bootStart: Date?
     private var target = "omarchy"
@@ -288,7 +287,6 @@ final class FakeTowerBackend: TowerModel.Backend, @unchecked Sendable {
     }
 
     func state() async throws -> Data {
-        lock.lock(); defer { lock.unlock() }
         let now = Date()
         var out: [String: Any] = [
             "state": "off", "phase": "idle", "since": ISO8601DateFormatter().string(from: now.addingTimeInterval(-3 * 3600)),
@@ -344,7 +342,6 @@ final class FakeTowerBackend: TowerModel.Backend, @unchecked Sendable {
     }
 
     func boot(_ os: HubRPC.PowerBootParamsOS) async throws -> Data {
-        lock.lock(); defer { lock.unlock() }
         if scenario == "not_set_up" {
             throw HubHelperClient.Failure(kind: .rpc(code: "unavailable"), message: "server: power.boot is not implemented yet")
         }
