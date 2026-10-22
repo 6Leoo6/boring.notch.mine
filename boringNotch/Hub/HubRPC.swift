@@ -46,6 +46,7 @@ public enum HubRPC {
         case peerList = "peer.list"
         case peerPing = "peer.ping"
         case powerBoot = "power.boot"
+        case powerOff = "power.off"
         case powerState = "power.state"
         case powerWake = "power.wake"
         case sceneApply = "scene.apply"
@@ -100,6 +101,7 @@ public enum HubRPC {
             case .peerList: return "peer"
             case .peerPing: return "peer"
             case .powerBoot: return "power"
+            case .powerOff: return "power"
             case .powerState: return "power"
             case .powerWake: return "power"
             case .sceneApply: return "home"
@@ -261,6 +263,12 @@ public enum HubRPC {
     public enum PowerBootParamsOS: String, Codable, CaseIterable, Hashable, Sendable {
         case omarchy = "omarchy"
         case windows = "windows"
+    }
+
+    /// poweroff (default) or reboot into the same OS.
+    public enum PowerOffParamsMode: String, Codable, CaseIterable, Hashable, Sendable {
+        case poweroff = "poweroff"
+        case reboot = "reboot"
     }
 
     public enum PowerState: String, Codable, CaseIterable, Hashable, Sendable {
@@ -1481,6 +1489,25 @@ public enum HubRPC {
             case accepted
             case etaSeconds = "eta_seconds"
             case state
+        }
+    }
+
+    public struct PowerOffParams: Codable, Hashable, Sendable {
+        /// poweroff (default) or reboot into the same OS.
+        public var mode: PowerOffParamsMode?
+
+        public init(mode: PowerOffParamsMode? = nil) {
+            self.mode = mode
+        }
+    }
+
+    public struct PowerOffResult: Codable, Hashable, Sendable {
+        public var accepted: Bool
+        public var state: PowerState
+
+        public init(accepted: Bool, state: PowerState) {
+            self.accepted = accepted
+            self.state = state
         }
     }
 

@@ -9,8 +9,10 @@
 //
 //    power.boot {os}  -> {accepted, state, eta_seconds}   returns at once
 //    power.state {}   -> {state, phase, detail, error, eta_seconds, relay{online…}, …}
+//    power.off {mode} -> {accepted, state}                  (D-146; the server relays it to
+//                                                           the tower, which then shuts down)
 //
-//  Polling: every 1.5 s while a boot runs (whether or not the notch is open, so the
+//  Polling: every 1.5 s while a boot or a shutdown runs (whether or not the notch is open, so the
 //  closed-notch peek can say when it's done), otherwise every 6 s while the Tower tab is
 //  on screen, and not at all when nobody looks.
 //
@@ -48,6 +50,22 @@ final class TowerModel: ObservableObject {
     @Published private(set) var loading = false
     /// Phases seen during the current boot, to tell a cold boot from a switch.
     @Published private(set) var seenSwitching = false
+    /// Shut down was tapped once: the tab asks "Shut down the tower?" (D-146).
+    @Published private(set) var confirmingOff = false
+    /// The shutdown (or restart) this Mac asked for, from the tap until the tower is off
+    /// (or back, for a restart) or the wait runs out.
+    @Published private(set) var stopping: HubRPC.PowerOffParamsMode?
+    /// power.off failed (refused, or never reached the server), or the tower stayed on.
+    @Published private(set) var offError: String?
+
+    /// How long to wait for the tower to go off (a restart also has to come back).
+    static var offTimeout: TimeInterval = 60
+    static var rebootTimeout: TimeInterval = 180
+
+    private var stopStarted: Date?
+    /// A restart has to leave the running OS before "back on" counts.
+    private var sawDown = false
+    private var confirmTask: Task<Void, Never>?
 
     private var viewers = 0
     private var pollTask: Task<Void, Never>?
@@ -116,6 +134,57 @@ final class TowerModel: ObservableObject {
 
     func dismissError() {
         requestError = nil
+        offError = nil
+    }
+
+    /// Whether Shut down is offered: only while an OS runs and nothing else is going on.
+    var canShutDown: Bool {
+        guard let state = power?.state, state == .omarchy || state == .windows else { return false }
+        return !isBooting && stopping == nil
+    }
+
+    /// First tap on Shut down: ask before doing it. The question goes away on its own.
+    func askToShutDown() {
+        guard canShutDown else { return }
+        offError = nil
+        confirmingOff = true
+        confirmTask?.cancel()
+        confirmTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(12))
+            guard !Task.isCancelled else { return }
+            self?.confirmingOff = false
+        }
+    }
+
+    func cancelShutDown() {
+        confirmTask?.cancel()
+        confirmingOff = false
+    }
+
+    /// Second step: shut the tower down (or restart it into the same OS).
+    func shutDown(_ mode: HubRPC.PowerOffParamsMode = .poweroff) {
+        confirmTask?.cancel()
+        confirmingOff = false
+        guard stopping == nil, !isBooting else { return }
+        offError = nil
+        stopping = mode
+        stopStarted = Date()
+        sawDown = false
+        Task {
+            do {
+                let data = try await backend.off(mode)
+                let result = try JSONDecoder().decode(HubRPC.PowerOffResult.self, from: data)
+                if !result.accepted {
+                    stopping = nil
+                    offError = "The server didn't take the request. The tower is still on."
+                }
+            } catch {
+                stopping = nil
+                offError = Self.offMessage(error)
+            }
+            await refresh()
+            startPolling()
+        }
     }
 
     // MARK: - Polling
@@ -127,7 +196,7 @@ final class TowerModel: ObservableObject {
                 guard let self else { return }
                 await self.refresh()
                 let interval: Double
-                if self.isBooting {
+                if self.isBooting || self.stopping != nil {
                     interval = 1.5
                 } else if self.viewers > 0 {
                     interval = 6
@@ -161,6 +230,7 @@ final class TowerModel: ObservableObject {
         power = state
         lastPhase = state.phase
         if state.phase == .switching { seenSwitching = true }
+        if stopping != nil { followStop(state) }
         // The server took over once it reports a running (or finished) boot for our target.
         if let requested, let phase = state.phase, phase != .idle,
            state.target?.rawValue == requested.rawValue {
@@ -175,6 +245,62 @@ final class TowerModel: ObservableObject {
                 glyph: phase == .failed ? "hub.error" : (state.target == .windows ? "hub.windows" : "hub.tower"),
                 failed: phase == .failed
             )
+        }
+    }
+
+    /// The shutdown this Mac asked for: done once power.state says off (a restart: once the
+    /// tower went down and is back), or given up after the timeout.
+    private func followStop(_ state: HubRPC.PowerStateResult) {
+        guard let mode = stopping, let started = stopStarted else { return }
+        let on: Set<HubRPC.PowerState> = [.omarchy, .windows]
+        if !on.contains(state.state) { sawDown = true }
+        let elapsed = Date().timeIntervalSince(started)
+        switch mode {
+        case .poweroff:
+            if state.state == .off {
+                stopping = nil
+                HubActivity.shared.towerFinished(title: "Tower is off", subtitle: "Shut down from this Mac",
+                                                 glyph: "hub.power", failed: false)
+            } else if elapsed > Self.offTimeout {
+                stopping = nil
+                offError = "The tower is still \(Self.stateTitle(state.state).lowercased()) after \(Int(Self.offTimeout)) s. Something there may be holding up the shutdown."
+            }
+        case .reboot:
+            if sawDown, on.contains(state.state) || state.state == .locked {
+                stopping = nil
+                HubActivity.shared.towerFinished(
+                    title: state.state == .locked ? "Tower restarted" : "Tower is back on \(Self.osName(state.state.rawValue) ?? "")",
+                    subtitle: state.state == .locked ? "Waiting for the disk unlock" : "Restarted from this Mac",
+                    glyph: "hub.tower", failed: false)
+            } else if elapsed > Self.rebootTimeout {
+                stopping = nil
+                offError = sawDown
+                    ? "The tower went down but isn't back after \(Int(Self.rebootTimeout / 60)) min."
+                    : "The tower is still on after \(Int(Self.rebootTimeout / 60)) min. Something there may be holding up the restart."
+            }
+        }
+    }
+
+    /// power.off's errors in the user's words (docs/BRAND.md voice).
+    static func offMessage(_ error: Error) -> String {
+        let (problem, message) = classify(error)
+        guard let failure = error as? HubHelperClient.Failure, case .rpc(let code) = failure.kind else {
+            if case .noHelper = problem { return "The hub helper isn't running. Restarting boring.notch starts it again." }
+            return message
+        }
+        let text = failure.message.lowercased()
+        if problem == .notSetUp {
+            return "The server can't shut the tower down yet. It needs the newer hub."
+        }
+        switch code {
+        case "invalid_params" where text.contains("boot"):
+            return "The tower is still starting. Try again once it's up."
+        case "unavailable" where text.contains("unlock") || text.contains("locked"):
+            return "The tower is waiting for the disk unlock, so there's nothing to shut down."
+        case "unavailable":
+            return "The server can't reach the tower right now. It may already be going down. \(cleanMessage(failure.message))"
+        default:
+            return cleanMessage(failure.message)
         }
     }
 
@@ -241,6 +367,7 @@ final class TowerModel: ObservableObject {
     protocol Backend: Sendable {
         func state() async throws -> Data
         func boot(_ os: HubRPC.PowerBootParamsOS) async throws -> Data
+        func off(_ mode: HubRPC.PowerOffParamsMode) async throws -> Data
     }
 
     struct ServerBackend: Backend {
@@ -251,6 +378,11 @@ final class TowerModel: ObservableObject {
         func boot(_ os: HubRPC.PowerBootParamsOS) async throws -> Data {
             try await HubHelperClient.peerCall(device: TowerModel.serverDevice, method: "power.boot",
                                                params: ["os": os.rawValue], timeoutMs: 10_000)
+        }
+
+        func off(_ mode: HubRPC.PowerOffParamsMode) async throws -> Data {
+            try await HubHelperClient.peerCall(device: TowerModel.serverDevice, method: "power.off",
+                                               params: ["mode": mode.rawValue], timeoutMs: 10_000)
         }
     }
 
@@ -268,6 +400,10 @@ final class TowerModel: ObservableObject {
         requestError = nil
         lastPhase = nil
         seenSwitching = false
+        confirmTask?.cancel()
+        confirmingOff = false
+        stopping = nil
+        offError = nil
         refreshSoon()
     }
     #endif
@@ -278,8 +414,13 @@ final class TowerModel: ObservableObject {
 /// Scenarios: off, omarchy, windows, locked, relay_offline, not_set_up, failed, booting.
 /// A boot runs waking 6 s, unlocking 2 s, starting 6 s (switching 3 s from a running OS),
 /// and fails at unlocking when the scenario is `fail_boot`.
+/// power.off (from omarchy/windows): on 3 s, not answering 5 s, then off; a restart comes
+/// back after another 6 s. `off_stuck` never goes down, `off_refused` answers invalid_params
+/// (a boot is running), `off_locked` answers unavailable (at the disk unlock).
 actor FakeTowerBackend: TowerModel.Backend {
     private var scenario: String
+    private var offStart: Date?
+    private var offMode = "poweroff"
     private var bootStart: Date?
     private var target = "omarchy"
     private var from = "off"
@@ -304,6 +445,8 @@ actor FakeTowerBackend: TowerModel.Backend {
             throw HubHelperClient.Failure(kind: .rpc(code: "unavailable"), message: "server: no answer within 8s")
         case "omarchy", "windows", "locked", "suspended", "nossh":
             out["state"] = scenario
+        case "off_stuck", "off_refused", "off_locked":
+            out["state"] = "omarchy"
         case "relay_offline":
             out["relay"] = ["online": false, "last_seen": ISO8601DateFormatter().string(from: now.addingTimeInterval(-41 * 60))]
         case "failed":
@@ -343,7 +486,40 @@ actor FakeTowerBackend: TowerModel.Backend {
             out["phase"] = phase
             out["state"] = phase == "done" ? target : (phase == "starting" ? "nossh" : (phase == "unlocking" ? "locked" : from))
         }
+        if let start = offStart {
+            let t = now.timeIntervalSince(start)
+            if scenario != "off_stuck", t >= 3 {
+                let back = scenario == "windows" ? "windows" : "omarchy"
+                switch (offMode, t) {
+                case (_, ..<8): out["state"] = "nossh"
+                case ("reboot", ..<14): out["state"] = "nossh"
+                case ("reboot", _): out["state"] = back
+                default:
+                    out["state"] = "off"
+                    out["since"] = ISO8601DateFormatter().string(from: start.addingTimeInterval(8))
+                }
+            }
+        }
         return try JSONSerialization.data(withJSONObject: out)
+    }
+
+    func off(_ mode: HubRPC.PowerOffParamsMode) async throws -> Data {
+        switch scenario {
+        case "not_set_up":
+            throw HubHelperClient.Failure(kind: .rpc(code: "unknown_method"), message: "server: unknown method power.off")
+        case "off_refused":
+            throw HubHelperClient.Failure(kind: .rpc(code: "invalid_params"), message: "server: a power.boot is running; wait for it to finish")
+        case "off_locked":
+            throw HubHelperClient.Failure(kind: .rpc(code: "unavailable"), message: "server: the tower is at the disk unlock")
+        default:
+            break
+        }
+        let running = ["omarchy", "windows", "off_stuck"].contains(scenario)
+        if running, offStart == nil {
+            offStart = Date()
+            offMode = mode.rawValue
+        }
+        return try JSONSerialization.data(withJSONObject: ["accepted": true, "state": running ? "omarchy" : "off"])
     }
 
     func boot(_ os: HubRPC.PowerBootParamsOS) async throws -> Data {
@@ -351,6 +527,10 @@ actor FakeTowerBackend: TowerModel.Backend {
             throw HubHelperClient.Failure(kind: .rpc(code: "unavailable"), message: "server: power.boot is not implemented yet")
         }
         from = ["omarchy", "windows"].contains(scenario) ? scenario : "off"
+        if offStart != nil, offMode == "poweroff" {
+            from = "off"
+            offStart = nil
+        }
         if scenario == "failed" { scenario = "off" }
         target = os.rawValue
         bootStart = Date()
