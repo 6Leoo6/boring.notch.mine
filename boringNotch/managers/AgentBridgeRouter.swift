@@ -71,6 +71,7 @@ enum AgentBridgeRouter {
         case "shelf.put": return try await shelfPut(args)
         case "shelf.remove": return try await shelfRemove(args)
         case "events.push": return try await eventsPush(args)
+        case "dictate.state": return try await dictateState(args)
         #if DEBUG
         case "debug.hub_peek": return await debugHubPeek(args)
         case "debug.hub_peek_render": return await debugHubPeekRender()
@@ -372,6 +373,34 @@ enum AgentBridgeRouter {
     /// (the sandboxed notch can't long-poll the helper). The notch keeps no event stream of its
     /// own, so the events drive the hub peek and are not kept; other topics are accepted and
     /// ignored. A malformed batch is refused whole, nothing of it shown.
+    /// `dictate.state` (hub D-169): the tower's dictation, live in the closed notch
+    /// (`DictationActivity`). Forwarded by the hub helper from the tower's `peer.call`.
+    private static func dictateState(_ args: Args) async throws -> Payload {
+        guard let id = args.string("session_id"), !id.isEmpty else {
+            throw BridgeError("session_id is required", code: "invalid_params")
+        }
+        guard let state = args.string("state") else {
+            throw BridgeError("state is required: listening or ended", code: "invalid_params")
+        }
+        let level = (args.raw["level"] as? NSNumber)?.doubleValue
+        let elapsed = args.int("elapsed_ms")
+        let ttl = args.int("ttl_ms")
+        let startedAt = args.string("started_at")
+        let target = args.string("target")
+        let targetApp = args.string("target_app")
+        let mic = args.string("mic")
+        let shown: Bool = try await MainActor.run {
+            do {
+                return try DictationActivity.shared.update(
+                    sessionID: id, state: state, elapsedMs: elapsed, startedAt: startedAt, ttlMs: ttl,
+                    level: level, target: target, targetApp: targetApp, mic: mic)
+            } catch DictationActivity.Failure.invalid(let message) {
+                throw BridgeError(message, code: "invalid_params")
+            }
+        }
+        return Payload(value: ["shown": shown])
+    }
+
     private static func eventsPush(_ args: Args) async throws -> Payload {
         guard let raw = args.raw["events"] as? [Any] else {
             throw BridgeError("events is required: an array of {topic, type, data}")

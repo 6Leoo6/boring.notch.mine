@@ -990,6 +990,9 @@ struct Shelf: View {
                 Defaults.Toggle(key: .showTowerTab) {
                     Text("Show the Tower tab (wake the tower through the hub)")
                 }
+                Defaults.Toggle(key: .showTowerDictation) {
+                    Text("Show when the tower is listening (dictation)")
+                }
 
             } header: {
                 HStack {

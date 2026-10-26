@@ -25,10 +25,14 @@ public enum HubRPC {
         case configtmDiff = "configtm.diff"
         case configtmList = "configtm.list"
         case configtmRestore = "configtm.restore"
+        case dictateState = "dictate.state"
         case eventsPush = "events.push"
         case eventsWait = "events.wait"
         case handoffOffer = "handoff.offer"
         case homeState = "home.state"
+        case hotspotStart = "hotspot.start"
+        case hotspotState = "hotspot.state"
+        case hotspotStop = "hotspot.stop"
         case hubDevices = "hub.devices"
         case hubPairCode = "hub.pair_code"
         case hubPoll = "hub.poll"
@@ -76,6 +80,12 @@ public enum HubRPC {
         case transferCommit = "transfer.commit"
         case transferStatus = "transfer.status"
         case urlOpen = "url.open"
+        case wifiFollow = "wifi.follow"
+        case wifiJoin = "wifi.join"
+        case wifiState = "wifi.state"
+        case wifiVaultList = "wifi.vault_list"
+        case wifiVaultPut = "wifi.vault_put"
+        case wifiVaultRemove = "wifi.vault_remove"
         case zenApply = "zen.apply"
         case zenStatus = "zen.status"
 
@@ -94,10 +104,14 @@ public enum HubRPC {
             case .configtmDiff: return "configtm"
             case .configtmList: return "configtm"
             case .configtmRestore: return "configtm"
+            case .dictateState: return "dictate"
             case .eventsPush: return "core"
             case .eventsWait: return "core"
             case .handoffOffer: return "handoff"
             case .homeState: return "home"
+            case .hotspotStart: return "wifi"
+            case .hotspotState: return "wifi"
+            case .hotspotStop: return "wifi"
             case .hubDevices: return "hub"
             case .hubPairCode: return "hub"
             case .hubPoll: return "hub"
@@ -145,6 +159,12 @@ public enum HubRPC {
             case .transferCommit: return "transfer"
             case .transferStatus: return "transfer"
             case .urlOpen: return "url"
+            case .wifiFollow: return "wifi"
+            case .wifiJoin: return "wifi"
+            case .wifiState: return "wifi"
+            case .wifiVaultList: return "wifi"
+            case .wifiVaultPut: return "wifi"
+            case .wifiVaultRemove: return "wifi"
             case .zenApply: return "zen"
             case .zenStatus: return "zen"
             }
@@ -160,6 +180,8 @@ public enum HubRPC {
         case transferFailed = "transfer.failed"
         case transferProgress = "transfer.progress"
         case transferStarted = "transfer.started"
+        case wifiChanged = "wifi.changed"
+        case wifiHotspot = "wifi.hotspot"
 
         /// Event.topic of this type (the topic to pass to events.wait).
         public var topic: String {
@@ -171,6 +193,8 @@ public enum HubRPC {
             case .transferFailed: return "transfer"
             case .transferProgress: return "transfer"
             case .transferStarted: return "transfer"
+            case .wifiChanged: return "wifi"
+            case .wifiHotspot: return "wifi"
             }
         }
     }
@@ -261,6 +285,21 @@ public enum HubRPC {
         case linux = "linux"
     }
 
+    /// With ended: why. stopped: the owner stopped it and the text is being transcribed; the rest end without text.
+    public enum DictateStateParamsReason: String, Codable, CaseIterable, Hashable, Sendable {
+        case stopped = "stopped"
+        case cancelled = "cancelled"
+        case error = "error"
+        case timeout = "timeout"
+        case lost = "lost"
+    }
+
+    /// listening: the mic is open and recording (sent at the start and then every 500 ms). ended: the session is over (stopped, cancelled, failed, lost); the activity goes away at once.
+    public enum DictateStateParamsState: String, Codable, CaseIterable, Hashable, Sendable {
+        case listening = "listening"
+        case ended = "ended"
+    }
+
     public enum ErrorCode: String, Codable, CaseIterable, Hashable, Sendable {
         case unauthorized = "unauthorized"
         case unknownMethod = "unknown_method"
@@ -277,6 +316,40 @@ public enum HubRPC {
         case url = "url"
         case code = "code"
         case media = "media"
+    }
+
+    /// Preference; the phone may ignore it (method settings_prompt, local_only).
+    public enum HotspotStartParamsBand: String, Codable, CaseIterable, Hashable, Sendable {
+        case any = "any"
+        case ghz24 = "ghz_2_4"
+        case ghz5 = "ghz_5"
+        case ghz6 = "ghz_6"
+    }
+
+    public enum HotspotStateBand: String, Codable, CaseIterable, Hashable, Sendable {
+        case any = "any"
+        case ghz24 = "ghz_2_4"
+        case ghz5 = "ghz_5"
+        case ghz6 = "ghz_6"
+    }
+
+    /// How it was turned on: shell (cmd wifi start-softap / cmd connectivity tether with a shell-privileged helper), shizuku, vendor (e.g. Samsung's own API or automation), local_only (LocalOnlyHotspot), settings_prompt (the owner tapped the notification), manual (it was already on, turned on by hand).
+    public enum HotspotStateMethod: String, Codable, CaseIterable, Hashable, Sendable {
+        case shell = "shell"
+        case shizuku = "shizuku"
+        case vendor = "vendor"
+        case localOnly = "local_only"
+        case settingsPrompt = "settings_prompt"
+        case manual = "manual"
+    }
+
+    public enum HotspotStateState: String, Codable, CaseIterable, Hashable, Sendable {
+        case off = "off"
+        case starting = "starting"
+        case on = "on"
+        case needsUser = "needs_user"
+        case failed = "failed"
+        case unsupported = "unsupported"
     }
 
     public enum HubDeviceKind: String, Codable, CaseIterable, Hashable, Sendable {
@@ -437,6 +510,58 @@ public enum HubRPC {
         case notified = "notified"
     }
 
+    /// saved: read from the contributor's own store (tower NetworkManager, Mac Keychain after the owner's prompt); qr: Android Share network / WIFI: QR; typed.
+    public enum WifiCredentialLearnedFrom: String, Codable, CaseIterable, Hashable, Sendable {
+        case saved = "saved"
+        case qr = "qr"
+        case typed = "typed"
+    }
+
+    /// declined: the follow policy said no (setting follow, or this device is on another network the phone was never on). not_visible: not in a scan. unsupported: enterprise or an OS that can't join programmatically.
+    public enum WifiFollowResultAction: String, Codable, CaseIterable, Hashable, Sendable {
+        case joined = "joined"
+        case already = "already"
+        case declined = "declined"
+        case notVisible = "not_visible"
+        case noCredentials = "no_credentials"
+        case unsupported = "unsupported"
+        case failed = "failed"
+    }
+
+    /// Where the credential came from (joined only).
+    public enum WifiFollowResultCredentialSource: String, Codable, CaseIterable, Hashable, Sendable {
+        case saved = "saved"
+        case vault = "vault"
+        case params = "params"
+        case none = "none"
+    }
+
+    public enum WifiJoinResultCredentialSource: String, Codable, CaseIterable, Hashable, Sendable {
+        case saved = "saved"
+        case vault = "vault"
+        case params = "params"
+        case none = "none"
+    }
+
+    /// enterprise (802.1X) networks are reported but never followed or stored (D-151).
+    public enum WifiSecurity: String, Codable, CaseIterable, Hashable, Sendable {
+        case `open` = "open"
+        case owe = "owe"
+        case wpa2 = "wpa2"
+        case wpa3 = "wpa3"
+        case wpa2Wpa3 = "wpa2_wpa3"
+        case enterprise = "enterprise"
+        case unknown = "unknown"
+    }
+
+    /// Another connection the device has besides Wi-Fi.
+    public enum WifiStateOtherUplink: String, Codable, CaseIterable, Hashable, Sendable {
+        case none = "none"
+        case ethernet = "ethernet"
+        case cellular = "cellular"
+        case other = "other"
+    }
+
     /// missing: in neither.
     public enum ZenFileState: String, Codable, CaseIterable, Hashable, Sendable {
         case inSync = "in_sync"
@@ -455,7 +580,7 @@ public enum HubRPC {
         }
     }
 
-    /// roc packet encoding: signed 16-bit PCM (RTP L16). payload_type 11 = roc's built-in mono 44100 Hz, 10 = built-in stereo 44100 Hz (what PipeWire's roc modules speak). 100-127 = a custom encoding both ends register with roc_context_register_encoding under that id using rate and channels; the dictation default is {rate 16000, channels 1, payload_type 100} for a libroc receiver feeding speech-to-text directly. Defaults when absent: mic 16000/1/100, speaker 44100/2/10.
+    /// roc packet encoding: signed 16-bit PCM (RTP L16). payload_type 11 = roc's built-in mono 44100 Hz, 10 = built-in stereo 44100 Hz (what PipeWire's roc modules speak). 100-127 = a custom encoding both ends register with roc_context_register_encoding under that id using rate and channels (only for a libroc receiver; PipeWire's roc modules can't register one). Defaults when absent: mic and speaker 44100/2/10 (amended 2026-10-26, D-148: the mic default was 16000/1/100, which the tower's PipeWire roc-source receiver can't take; the receiver resamples to what speech-to-text needs). A sender that can't send the asked encoding answers invalid_params.
     public struct AudioEncoding: Codable, Hashable, Sendable {
         /// 1 or 2.
         public var channels: Int64
@@ -1086,6 +1211,64 @@ public enum HubRPC {
         }
     }
 
+    public struct DictateStateParams: Codable, Hashable, Sendable {
+        /// Time listening so far; the receiver anchors its timer on it, so clock skew doesn't matter.
+        public var elapsedMs: Int64?
+        /// Voice level now, 0..1 (clamped) (the peak of the last interval, already smoothed).
+        public var level: Double?
+        /// Device id whose mic is recording (phone, tower), when known.
+        public var mic: String?
+        /// With ended: why. stopped: the owner stopped it and the text is being transcribed; the rest end without text.
+        public var reason: DictateStateParamsReason?
+        /// Opaque id of one dictation session. An update for another id replaces the shown session; ended for an id that isn't shown is ignored.
+        public var sessionId: String
+        /// When listening began, on the sender's clock. Used for the timer only when elapsed_ms is missing.
+        public var startedAt: String?
+        /// listening: the mic is open and recording (sent at the start and then every 500 ms). ended: the session is over (stopped, cancelled, failed, lost); the activity goes away at once.
+        public var state: DictateStateParamsState
+        /// Title of the window the text will be pasted into, when known (at most 200 characters are shown).
+        public var target: String?
+        /// That window's app (Hyprland class), when known.
+        public var targetApp: String?
+        /// How long this update stays valid, 500..10000 (default 3000; out of range is clamped). With no further update in that time the receiver clears the activity as if ended.
+        public var ttlMs: Int64?
+
+        public init(elapsedMs: Int64? = nil, level: Double? = nil, mic: String? = nil, reason: DictateStateParamsReason? = nil, sessionId: String, startedAt: String? = nil, state: DictateStateParamsState, target: String? = nil, targetApp: String? = nil, ttlMs: Int64? = nil) {
+            self.elapsedMs = elapsedMs
+            self.level = level
+            self.mic = mic
+            self.reason = reason
+            self.sessionId = sessionId
+            self.startedAt = startedAt
+            self.state = state
+            self.target = target
+            self.targetApp = targetApp
+            self.ttlMs = ttlMs
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case elapsedMs = "elapsed_ms"
+            case level
+            case mic
+            case reason
+            case sessionId = "session_id"
+            case startedAt = "started_at"
+            case state
+            case target
+            case targetApp = "target_app"
+            case ttlMs = "ttl_ms"
+        }
+    }
+
+    public struct DictateStateResult: Codable, Hashable, Sendable {
+        /// true while the activity is up after this call; false after ended, or when the owner turned the activity off on this device.
+        public var shown: Bool
+
+        public init(shown: Bool) {
+            self.shown = shown
+        }
+    }
+
     public struct Empty: Codable, Hashable, Sendable {
         public init() {
         }
@@ -1220,6 +1403,71 @@ public enum HubRPC {
             self.devices = devices
             self.facts = facts
             self.time = time
+        }
+    }
+
+    public struct HotspotStartParams: Codable, Hashable, Sendable {
+        /// Preference; the phone may ignore it (method settings_prompt, local_only).
+        public var band: HotspotStartParamsBand?
+        /// Turn it off again after this long without clients (default 10; 0 = leave it to the phone's own timeout).
+        public var idleStopMinutes: Int64?
+        /// Accept Android's LocalOnlyHotspot (no internet, random SSID and passphrase) when tethering can't be started: enough for phone↔Mac traffic, not for internet.
+        public var localOnly: Bool?
+
+        public init(band: HotspotStartParamsBand? = nil, idleStopMinutes: Int64? = nil, localOnly: Bool? = nil) {
+            self.band = band
+            self.idleStopMinutes = idleStopMinutes
+            self.localOnly = localOnly
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case band
+            case idleStopMinutes = "idle_stop_minutes"
+            case localOnly = "local_only"
+        }
+    }
+
+    public struct HotspotState: Codable, Hashable, Sendable {
+        public var band: HotspotStateBand?
+        public var clients: Int64?
+        /// Shares mobile data (false for local_only).
+        public var internet: Bool?
+        /// How it was turned on: shell (cmd wifi start-softap / cmd connectivity tether with a shell-privileged helper), shizuku, vendor (e.g. Samsung's own API or automation), local_only (LocalOnlyHotspot), settings_prompt (the owner tapped the notification), manual (it was already on, turned on by hand).
+        public var method: HotspotStateMethod?
+        /// Secret. Only in hotspot.start's answer; never in hotspot.state, hotspot.stop or the wifi.hotspot event.
+        public var passphrase: String?
+        /// needs_user / failed / unsupported: what the owner should do or what went wrong.
+        public var reason: String?
+        public var security: WifiSecurity?
+        public var ssid: String?
+        /// hotspot.stop only turns off a hotspot this module started.
+        public var startedByUs: Bool?
+        public var state: HotspotStateState
+
+        public init(band: HotspotStateBand? = nil, clients: Int64? = nil, internet: Bool? = nil, method: HotspotStateMethod? = nil, passphrase: String? = nil, reason: String? = nil, security: WifiSecurity? = nil, ssid: String? = nil, startedByUs: Bool? = nil, state: HotspotStateState) {
+            self.band = band
+            self.clients = clients
+            self.internet = internet
+            self.method = method
+            self.passphrase = passphrase
+            self.reason = reason
+            self.security = security
+            self.ssid = ssid
+            self.startedByUs = startedByUs
+            self.state = state
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case band
+            case clients
+            case internet
+            case method
+            case passphrase
+            case reason
+            case security
+            case ssid
+            case startedByUs = "started_by_us"
+            case state
         }
     }
 
@@ -2859,6 +3107,254 @@ public enum HubRPC {
 
         public init(result: UrlOpenResultResult) {
             self.result = result
+        }
+    }
+
+    /// The plaintext inside a vault box (D-152), JSON, sealed with internal/seal from the contributing device to one recipient. Never stored or logged in plaintext outside the OS secret store.
+    public struct WifiCredential: Codable, Hashable, Sendable {
+        public var hidden: Bool?
+        /// Set when this is a paired device's own hotspot (the phone's "Share hotspot to hub").
+        public var hotspotOf: String?
+        public var learnedAt: String?
+        /// saved: read from the contributor's own store (tower NetworkManager, Mac Keychain after the owner's prompt); qr: Android Share network / WIFI: QR; typed.
+        public var learnedFrom: WifiCredentialLearnedFrom?
+        /// Secret.
+        public var passphrase: String
+        public var security: WifiSecurity
+        public var ssid: String
+
+        public init(hidden: Bool? = nil, hotspotOf: String? = nil, learnedAt: String? = nil, learnedFrom: WifiCredentialLearnedFrom? = nil, passphrase: String, security: WifiSecurity, ssid: String) {
+            self.hidden = hidden
+            self.hotspotOf = hotspotOf
+            self.learnedAt = learnedAt
+            self.learnedFrom = learnedFrom
+            self.passphrase = passphrase
+            self.security = security
+            self.ssid = ssid
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case hidden
+            case hotspotOf = "hotspot_of"
+            case learnedAt = "learned_at"
+            case learnedFrom = "learned_from"
+            case passphrase
+            case security
+            case ssid
+        }
+    }
+
+    public struct WifiFollowParams: Codable, Hashable, Sendable {
+        /// The network doesn't broadcast its SSID (join without seeing it in a scan).
+        public var hidden: Bool?
+        /// Secret, optional: only when the caller holds it in plaintext (the owner shared it into the phone app). Same handling as WifiJoinParams.passphrase.
+        public var passphrase: String?
+        /// The network the phone left; followers on it count as moving together (policy together).
+        public var previousSsid: String?
+        public var security: WifiSecurity?
+        public var ssid: String
+
+        public init(hidden: Bool? = nil, passphrase: String? = nil, previousSsid: String? = nil, security: WifiSecurity? = nil, ssid: String) {
+            self.hidden = hidden
+            self.passphrase = passphrase
+            self.previousSsid = previousSsid
+            self.security = security
+            self.ssid = ssid
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case hidden
+            case passphrase
+            case previousSsid = "previous_ssid"
+            case security
+            case ssid
+        }
+    }
+
+    public struct WifiFollowResult: Codable, Hashable, Sendable {
+        /// declined: the follow policy said no (setting follow, or this device is on another network the phone was never on). not_visible: not in a scan. unsupported: enterprise or an OS that can't join programmatically.
+        public var action: WifiFollowResultAction
+        /// Where the credential came from (joined only).
+        public var credentialSource: WifiFollowResultCredentialSource?
+        public var reason: String?
+        public var state: WifiState?
+
+        public init(action: WifiFollowResultAction, credentialSource: WifiFollowResultCredentialSource? = nil, reason: String? = nil, state: WifiState? = nil) {
+            self.action = action
+            self.credentialSource = credentialSource
+            self.reason = reason
+            self.state = state
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case action
+            case credentialSource = "credential_source"
+            case reason
+            case state
+        }
+    }
+
+    public struct WifiJoinParams: Codable, Hashable, Sendable {
+        public var hidden: Bool?
+        /// Secret. Absent: use the device's own saved network, then the hub vault.
+        public var passphrase: String?
+        /// Keep the network in the OS's own store (default true; false for a one-off join such as a hotspot the phone rotates).
+        public var save: Bool?
+        public var security: WifiSecurity?
+        public var ssid: String
+        /// How long to wait for association and an address; default 20000, capped at 60000.
+        public var timeoutMs: Int64?
+
+        public init(hidden: Bool? = nil, passphrase: String? = nil, save: Bool? = nil, security: WifiSecurity? = nil, ssid: String, timeoutMs: Int64? = nil) {
+            self.hidden = hidden
+            self.passphrase = passphrase
+            self.save = save
+            self.security = security
+            self.ssid = ssid
+            self.timeoutMs = timeoutMs
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case hidden
+            case passphrase
+            case save
+            case security
+            case ssid
+            case timeoutMs = "timeout_ms"
+        }
+    }
+
+    public struct WifiJoinResult: Codable, Hashable, Sendable {
+        public var credentialSource: WifiJoinResultCredentialSource?
+        public var joined: Bool
+        /// Why not, in plain words (wrong password, not in range, timed out). Never echoes the passphrase.
+        public var reason: String?
+        public var state: WifiState?
+
+        public init(credentialSource: WifiJoinResultCredentialSource? = nil, joined: Bool, reason: String? = nil, state: WifiState? = nil) {
+            self.credentialSource = credentialSource
+            self.joined = joined
+            self.reason = reason
+            self.state = state
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case credentialSource = "credential_source"
+            case joined
+            case reason
+            case state
+        }
+    }
+
+    public struct WifiState: Codable, Hashable, Sendable {
+        /// A captive portal is waiting for a login.
+        public var captive: Bool?
+        public var connected: Bool
+        /// Wi-Fi radio on.
+        public var enabled: Bool
+        public var frequencyMhz: Int64?
+        /// Device id when this network is a paired device's hotspot.
+        public var hotspotOf: String?
+        /// The OS validated internet access on this network.
+        public var internet: Bool?
+        public var metered: Bool?
+        /// Another connection the device has besides Wi-Fi.
+        public var otherUplink: WifiStateOtherUplink?
+        public var security: WifiSecurity?
+        public var signalDbm: Int64?
+        /// Empty when not connected or when the OS hides it (Android without location permission, macOS without Location access: then ssid_hidden is true).
+        public var ssid: String?
+        public var ssidHidden: Bool?
+
+        public init(captive: Bool? = nil, connected: Bool, enabled: Bool, frequencyMhz: Int64? = nil, hotspotOf: String? = nil, internet: Bool? = nil, metered: Bool? = nil, otherUplink: WifiStateOtherUplink? = nil, security: WifiSecurity? = nil, signalDbm: Int64? = nil, ssid: String? = nil, ssidHidden: Bool? = nil) {
+            self.captive = captive
+            self.connected = connected
+            self.enabled = enabled
+            self.frequencyMhz = frequencyMhz
+            self.hotspotOf = hotspotOf
+            self.internet = internet
+            self.metered = metered
+            self.otherUplink = otherUplink
+            self.security = security
+            self.signalDbm = signalDbm
+            self.ssid = ssid
+            self.ssidHidden = ssidHidden
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case captive
+            case connected
+            case enabled
+            case frequencyMhz = "frequency_mhz"
+            case hotspotOf = "hotspot_of"
+            case internet
+            case metered
+            case otherUplink = "other_uplink"
+            case security
+            case signalDbm = "signal_dbm"
+            case ssid
+            case ssidHidden = "ssid_hidden"
+        }
+    }
+
+    public struct WifiVaultListParams: Codable, Hashable, Sendable {
+        public var since: String?
+
+        public init(since: String? = nil) {
+            self.since = since
+        }
+    }
+
+    public struct WifiVaultListResult: Codable, Hashable, Sendable {
+        public var records: [WifiVaultRecord]
+
+        public init(records: [WifiVaultRecord]) {
+            self.records = records
+        }
+    }
+
+    public struct WifiVaultPutParams: Codable, Hashable, Sendable {
+        /// At most 64 per call, each box at most 4096 bytes.
+        public var records: [WifiVaultRecord]
+
+        public init(records: [WifiVaultRecord]) {
+            self.records = records
+        }
+    }
+
+    public struct WifiVaultPutResult: Codable, Hashable, Sendable {
+        public var stored: Int64
+
+        public init(stored: Int64) {
+            self.stored = stored
+        }
+    }
+
+    public struct WifiVaultRecord: Codable, Hashable, Sendable {
+        /// seal(WifiCredential JSON, to's public key, from's private key), base64.
+        public var box: String
+        /// Contributor device id (set by the hub from the device token on put).
+        public var from: String?
+        /// Chosen by the contributor (uppercase UUID), the same for every recipient's copy of one credential; not derived from the SSID, so the hub can't link it to a network.
+        public var id: String
+        /// Recipient device id.
+        public var to: String
+        public var updated: String?
+
+        public init(box: String, from: String? = nil, id: String, to: String, updated: String? = nil) {
+            self.box = box
+            self.from = from
+            self.id = id
+            self.to = to
+            self.updated = updated
+        }
+    }
+
+    public struct WifiVaultRemoveResult: Codable, Hashable, Sendable {
+        public var removed: Int64
+
+        public init(removed: Int64) {
+            self.removed = removed
         }
     }
 

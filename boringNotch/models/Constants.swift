@@ -218,6 +218,8 @@ extension Defaults.Keys {
     static let showHubArrivals = Key<Bool>("showHubArrivals", default: true)
     /// The Tower tab: wake the tower into Omarchy or Windows through the hub (D-145).
     static let showTowerTab = Key<Bool>("showTowerTab", default: true)
+    /// "Tower listening" in the closed notch while the tower dictates (hub D-169).
+    static let showTowerDictation = Key<Bool>("showTowerDictation", default: true)
     
     // MARK: Clipboard
     static let clipboardHistoryEnabled = Key<Bool>("clipboardHistoryEnabled", default: true)

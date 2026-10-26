@@ -23,6 +23,7 @@ struct ContentView: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
+    @ObservedObject var dictation = DictationActivity.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var closeWatchTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
@@ -109,6 +110,7 @@ struct ContentView: View {
     /// rewiring all three would be a layout change dressed up as a glow change.
     private var closedArtGlowIsLive: Bool {
         guard Defaults[.lightingEffect], vm.notchState == .closed, !vm.hideOnClosed else { return false }
+        guard !dictationStripIsLive else { return false }
         guard coordinator.musicLiveActivityEnabled else { return false }
         guard musicManager.isPlaying || !musicManager.isPlayerIdle else { return false }
         return !coordinator.expandingView.show || coordinator.expandingView.type == .music
@@ -126,6 +128,13 @@ struct ContentView: View {
         glowPulse ? CGSize(width: 1.5, height: -1) : CGSize(width: -1.5, height: 1)
     }
 
+    /// The tower is dictating (hub D-169): its strip takes the closed island over the music
+    /// one for as long as it listens. Battery's expanding view still wins (checked first).
+    private var dictationStripIsLive: Bool {
+        dictation.isActive && vm.notchState == .closed && !vm.hideOnClosed
+            && !(coordinator.expandingView.show && coordinator.expandingView.type == .battery)
+    }
+
     private var computedChinWidth: CGFloat {
         var chinWidth: CGFloat = vm.closedNotchSize.width
 
@@ -133,6 +142,8 @@ struct ContentView: View {
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
             chinWidth = 640
+        } else if dictationStripIsLive {
+            chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
         } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music)
             && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle)
             && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed
@@ -510,6 +521,18 @@ struct ContentView: View {
                       } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && coordinator.sneakPeek.type.usesSystemHUD && vm.notchState == .closed {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
+                      } else if dictationStripIsLive {
+                          DictationLiveActivity()
+                              .frame(alignment: .center)
+                              .background {
+                                  GeometryReader { proxy in
+                                      Color.clear.preference(
+                                          key: ClosedStripWidthKey.self,
+                                          value: proxy.size.width
+                                      )
+                                  }
+                              }
+                              .transition(.opacity)
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
                           MusicLiveActivity()
                               .frame(alignment: .center)
@@ -582,6 +605,21 @@ struct ContentView: View {
                                               .combined(with: .scale(scale: 0.94, anchor: .top))
                                       )
                               }
+                          }
+                          else if coordinator.sneakPeek.type == .dictation && vm.notchState == .closed && !vm.hideOnClosed {
+                              // Same slot and entrance as the music and hub peeks.
+                              DictationPeekView()
+                                  .frame(
+                                      minWidth: max(closedStripWidth, vm.closedNotchSize.width),
+                                      alignment: .center
+                                  )
+                                  .padding(.top, 4)
+                                  .padding(.bottom, 10)
+                                  .transition(
+                                      .move(edge: .top)
+                                          .combined(with: .opacity)
+                                          .combined(with: .scale(scale: 0.94, anchor: .top))
+                                  )
                           }
                           else if coordinator.sneakPeek.type == .hub && vm.notchState == .closed && !vm.hideOnClosed {
                               // Same slot, frame and entrance as the music peek above, so an
@@ -779,6 +817,32 @@ struct ContentView: View {
             height: vm.effectiveClosedNotchHeight,
             alignment: .center
         )
+    }
+
+    /// The tower is listening (hub D-169): the mic where the music strip has its artwork, the
+    /// voice level where it has the visualizer, the notch's black body between them. Same
+    /// geometry as `MusicLiveActivity`, so the island keeps its size when one replaces the other.
+    @ViewBuilder
+    func DictationLiveActivity() -> some View {
+        let side = max(0, vm.effectiveClosedNotchHeight - 12)
+        HStack {
+            Image("hub.mic")
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .padding(side * 0.12)
+                .foregroundStyle(dictationTint)
+                .frame(width: side, height: side)
+
+            Rectangle()
+                .fill(.black)
+                .frame(width: vm.closedNotchSize.width + -cornerRadiusInsets.closed.top)
+
+            DictationLevelBars(level: dictation.level)
+                .frame(width: side * 0.75, height: side * 0.7)
+                .frame(width: side, height: side, alignment: .center)
+        }
+        .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
     }
 
     @ViewBuilder
