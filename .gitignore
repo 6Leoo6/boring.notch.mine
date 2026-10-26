@@ -54,3 +54,6 @@ build/
 *.dSYM
 
 Hub/bin/
+
+# Build products of Hub/notch-install.sh (Spotlight skips .noindex)
+build.noindex/
