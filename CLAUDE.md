@@ -11,6 +11,7 @@ Personal fork of [boring.notch](https://github.com/TheBoredTeam/boring.notch) fo
 - The app has **no Dock icon** — it lives in the **menu bar** (sparkle icon) and renders a borderless overlay window positioned at the notch.
 - To restart after a code change, use the menu bar → "Restart Boring Notch", or quit and re-run from Xcode.
 - Kill any existing running instance before launching a new debug build: `pkill -x boringNotch` or quit via the menu bar first.
+- **One install only** (hub D-162): the Mac must have exactly one registered `boringNotch.app`, `/Applications/boringNotch.app`; every extra copy (build products, backups) shows up as another install in Spotlight, Launchpad and Open With. Build and install from a shell only through `Hub/notch-install.sh` (`install` in the Mac's Terminal for a signed build, `install --adhoc` over SSH, `build NAME` + `clean` for test builds, `rollback`, `check`). Never pass `-derivedDataPath build/...`, never keep a backup `.app` (the script keeps the previous install as one zip). After running from Xcode (Cmd+R puts a copy in DerivedData), run `zsh Hub/notch-install.sh clean` or the next `install` sweeps it.
 
 ### Checking Code Without Full Build
 - Use `XcodeRefreshCodeIssuesInFile` for instant compiler diagnostics on a single Swift file.
