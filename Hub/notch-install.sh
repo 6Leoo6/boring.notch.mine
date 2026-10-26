@@ -52,7 +52,16 @@ is_build_product() { [[ $1 == */Build/Products/* || $1 == */build.noindex/* || $
 # The top-level boringNotch.app of a registered path (helpers inside it map to their app).
 top_app() { print -r -- "${1%%boringNotch.app*}boringNotch.app"; }
 
-unregister() { $LSR -u "$1" >/dev/null 2>&1 || true; }
+# Unregister an app and every bundle inside it (Updater.app, HubHelper*.app): lsregister -u on the
+# app alone leaves the nested ones registered. Works for paths already deleted from disk, too.
+unregister() {
+  local p
+  $LSR -u -R "$1" >/dev/null 2>&1 || true
+  for p in "${(@f)$(registered)}"; do
+    [[ $p == $1 || $p == $1/* ]] && { $LSR -u "$p" >/dev/null 2>&1 || true; }
+  done
+  return 0
+}
 
 # Unregister every copy outside /Applications; delete it only when it is an Xcode build product.
 # Prints the copies it had to leave on disk.
