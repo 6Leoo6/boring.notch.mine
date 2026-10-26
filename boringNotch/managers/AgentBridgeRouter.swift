@@ -20,7 +20,12 @@ enum AgentBridgeRouter {
 
     struct BridgeError: Error {
         let message: String
-        init(_ message: String) { self.message = message }
+        /// A hub contract error code (`not_found`, `unavailable`...); nil lets the caller infer one.
+        let code: String?
+        init(_ message: String, code: String? = nil) {
+            self.message = message
+            self.code = code
+        }
     }
 
     /// `[String: Any]` is not Sendable; these only ever cross from the connection's queue to
@@ -46,7 +51,13 @@ enum AgentBridgeRouter {
             let result = try await dispatch(op, args)
             return encode(["ok": true, "result": result.value])
         } catch let error as BridgeError {
-            return encode(["ok": false, "error": error.message])
+            var out: [String: Any] = ["ok": false, "error": error.message]
+            if let code = error.code { out["code"] = code }
+            return encode(out)
+        } catch let error as HubScreenCapture.Failure {
+            var out: [String: Any] = ["ok": false, "error": error.message]
+            if let code = error.code { out["code"] = code }
+            return encode(out)
         } catch {
             return encode(["ok": false, "error": error.localizedDescription])
         }
@@ -69,6 +80,9 @@ enum AgentBridgeRouter {
         case "clipboard.list": return try await clipboardList(args)
         case "clipboard.get": return try await clipboardGet(args)
         case "clipboard.add": return try await clipboardAdd(args)
+        case "screen.capture.sources": return try await screenCaptureSources()
+        case "screen.capture.start": return try await screenCaptureStart(args)
+        case "screen.capture.stop": return try screenCaptureStop(args)
         default: throw BridgeError("Unknown op \(op)")
         }
     }
@@ -76,6 +90,36 @@ enum AgentBridgeRouter {
     private static func encode(_ object: [String: Any]) -> Data {
         (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]))
             ?? Data(#"{"ok":false,"error":"Response was not encodable"}"#.utf8)
+    }
+
+    // MARK: - hubcast (screen.capture.*, hub docs/SCREEN.md)
+
+    /// The embedded hub helper calls these; the capture itself is `HubScreenCapture`.
+    private static func screenCaptureSources() async throws -> Payload {
+        let result = try await HubScreenCapture.shared.sources()
+        return try codable(result)
+    }
+
+    private static func screenCaptureStart(_ args: Args) async throws -> Payload {
+        let params: HubRPC.ScreenCaptureStartParams
+        do {
+            let data = try JSONSerialization.data(withJSONObject: args.raw)
+            params = try JSONDecoder().decode(HubRPC.ScreenCaptureStartParams.self, from: data)
+        } catch {
+            throw BridgeError("session, source, ingest_port and ingest_token are required", code: "invalid_params")
+        }
+        let result = try await HubScreenCapture.shared.start(params)
+        return try codable(result)
+    }
+
+    private static func screenCaptureStop(_ args: Args) throws -> Payload {
+        guard let session = args.string("session"), !session.isEmpty else { throw BridgeError("session is required", code: "invalid_params") }
+        return try codable(HubScreenCapture.shared.stop(session))
+    }
+
+    private static func codable<T: Encodable>(_ value: T) throws -> Payload {
+        let data = try JSONEncoder().encode(value)
+        return Payload(value: try JSONSerialization.jsonObject(with: data))
     }
 
     // MARK: - Status

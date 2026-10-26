@@ -13,6 +13,10 @@ public enum HubRPC {
 
     /// Every method in x-methods (raw value = wire name).
     public enum Method: String, Codable, CaseIterable, Hashable, Sendable {
+        case audioRenew = "audio.renew"
+        case audioRoute = "audio.route"
+        case audioStatus = "audio.status"
+        case audioUnroute = "audio.unroute"
         case batteryList = "battery.list"
         case capabilitiesList = "capabilities.list"
         case clipboardAdd = "clipboard.add"
@@ -37,6 +41,8 @@ public enum HubRPC {
         case macLock = "mac.lock"
         case macScreen = "mac.screen"
         case macState = "mac.state"
+        case micStart = "mic.start"
+        case micStop = "mic.stop"
         case notificationsClear = "notifications.clear"
         case notificationsDismiss = "notifications.dismiss"
         case notificationsList = "notifications.list"
@@ -46,11 +52,19 @@ public enum HubRPC {
         case peerList = "peer.list"
         case peerPing = "peer.ping"
         case powerBoot = "power.boot"
+        case powerOff = "power.off"
         case powerState = "power.state"
         case powerWake = "power.wake"
         case sceneApply = "scene.apply"
         case scenePlan = "scene.plan"
         case sceneUndo = "scene.undo"
+        case screenCaptureSources = "screen.capture.sources"
+        case screenCaptureStart = "screen.capture.start"
+        case screenCaptureStop = "screen.capture.stop"
+        case screenSources = "screen.sources"
+        case screenStart = "screen.start"
+        case screenStop = "screen.stop"
+        case screenViewer = "screen.viewer"
         case shelfGet = "shelf.get"
         case shelfList = "shelf.list"
         case shelfPut = "shelf.put"
@@ -61,12 +75,17 @@ public enum HubRPC {
         case transferChunk = "transfer.chunk"
         case transferCommit = "transfer.commit"
         case transferStatus = "transfer.status"
+        case urlOpen = "url.open"
         case zenApply = "zen.apply"
         case zenStatus = "zen.status"
 
         /// Module that owns the method.
         public var module: String {
             switch self {
+            case .audioRenew: return "audio"
+            case .audioRoute: return "audio"
+            case .audioStatus: return "audio"
+            case .audioUnroute: return "audio"
             case .batteryList: return "battery"
             case .capabilitiesList: return "core"
             case .clipboardAdd: return "clipboard"
@@ -91,6 +110,8 @@ public enum HubRPC {
             case .macLock: return "mac"
             case .macScreen: return "mac"
             case .macState: return "mac"
+            case .micStart: return "audio"
+            case .micStop: return "audio"
             case .notificationsClear: return "notifications"
             case .notificationsDismiss: return "notifications"
             case .notificationsList: return "notifications"
@@ -100,11 +121,19 @@ public enum HubRPC {
             case .peerList: return "peer"
             case .peerPing: return "peer"
             case .powerBoot: return "power"
+            case .powerOff: return "power"
             case .powerState: return "power"
             case .powerWake: return "power"
             case .sceneApply: return "home"
             case .scenePlan: return "home"
             case .sceneUndo: return "home"
+            case .screenCaptureSources: return "screen"
+            case .screenCaptureStart: return "screen"
+            case .screenCaptureStop: return "screen"
+            case .screenSources: return "screen"
+            case .screenStart: return "screen"
+            case .screenStop: return "screen"
+            case .screenViewer: return "screen"
             case .shelfGet: return "shelf"
             case .shelfList: return "shelf"
             case .shelfPut: return "shelf"
@@ -115,6 +144,7 @@ public enum HubRPC {
             case .transferChunk: return "transfer"
             case .transferCommit: return "transfer"
             case .transferStatus: return "transfer"
+            case .urlOpen: return "url"
             case .zenApply: return "zen"
             case .zenStatus: return "zen"
             }
@@ -123,6 +153,9 @@ public enum HubRPC {
 
     /// Every event type in x-events (raw value = Event.type).
     public enum EventType: String, Codable, CaseIterable, Hashable, Sendable {
+        case audioSession = "audio.session"
+        case screenStarted = "screen.started"
+        case screenStopped = "screen.stopped"
         case transferCompleted = "transfer.completed"
         case transferFailed = "transfer.failed"
         case transferProgress = "transfer.progress"
@@ -131,12 +164,54 @@ public enum HubRPC {
         /// Event.topic of this type (the topic to pass to events.wait).
         public var topic: String {
             switch self {
+            case .audioSession: return "audio"
+            case .screenStarted: return "screen"
+            case .screenStopped: return "screen"
             case .transferCompleted: return "transfer"
             case .transferFailed: return "transfer"
             case .transferProgress: return "transfer"
             case .transferStarted: return "transfer"
             }
         }
+    }
+
+    public enum AudioLinkFec: String, Codable, CaseIterable, Hashable, Sendable {
+        case rs8m = "rs8m"
+        case ldpc = "ldpc"
+        case disable = "disable"
+    }
+
+    public enum AudioSessionKind: String, Codable, CaseIterable, Hashable, Sendable {
+        case mic = "mic"
+        case speaker = "speaker"
+    }
+
+    /// needs_user: the OS needs a tap on the device first (Android can refuse to open the mic for an app in the background); the notification says what to tap. live: audio is flowing.
+    public enum AudioSessionState: String, Codable, CaseIterable, Hashable, Sendable {
+        case starting = "starting"
+        case needsUser = "needs_user"
+        case live = "live"
+        case stopped = "stopped"
+        case failed = "failed"
+    }
+
+    /// needs_user: a session will start in state needs_user (see AudioSession.state).
+    public enum AudioStatusResultMicPermission: String, Codable, CaseIterable, Hashable, Sendable {
+        case granted = "granted"
+        case needsUser = "needs_user"
+        case denied = "denied"
+    }
+
+    public enum AudioStopReason: String, Codable, CaseIterable, Hashable, Sendable {
+        case requested = "requested"
+        case stoppedOnDevice = "stopped_on_device"
+        case leaseExpired = "lease_expired"
+        case maxDuration = "max_duration"
+        case replaced = "replaced"
+        case permission = "permission"
+        case busy = "busy"
+        case network = "network"
+        case error = "error"
     }
 
     /// device: the host's own battery. bluetooth: a peripheral connected to the host (Bluetooth, or a wireless receiver such as Logitech's).
@@ -233,6 +308,19 @@ public enum HubRPC {
         case unknown = "unknown"
     }
 
+    /// Shown in the device's indicator and kept in its log (dictation default).
+    public enum MicStartParamsPurpose: String, Codable, CaseIterable, Hashable, Sendable {
+        case dictation = "dictation"
+        case call = "call"
+        case other = "other"
+    }
+
+    /// speech (default): capture tuned for recognition (Android AudioSource.VOICE_RECOGNITION: no echo cancelling, steady gain). call: echo cancelling and noise suppression on (VOICE_COMMUNICATION), for calls with the speaker also routed.
+    public enum MicStartParamsSource: String, Codable, CaseIterable, Hashable, Sendable {
+        case speech = "speech"
+        case call = "call"
+    }
+
     /// auto (default): direct first when the target advertises it and it worked lately, else the hub. direct/hub force one path (tests, measurements).
     public enum PeerCallParamsPath: String, Codable, CaseIterable, Hashable, Sendable {
         case auto = "auto"
@@ -263,6 +351,12 @@ public enum HubRPC {
         case windows = "windows"
     }
 
+    /// poweroff (default) or reboot into the same OS.
+    public enum PowerOffParamsMode: String, Codable, CaseIterable, Hashable, Sendable {
+        case poweroff = "poweroff"
+        case reboot = "reboot"
+    }
+
     public enum PowerState: String, Codable, CaseIterable, Hashable, Sendable {
         case off = "off"
         case windows = "windows"
@@ -288,6 +382,19 @@ public enum HubRPC {
     public enum PowerStateResultTarget: String, Codable, CaseIterable, Hashable, Sendable {
         case omarchy = "omarchy"
         case windows = "windows"
+    }
+
+    /// H.264 profile the viewer negotiated.
+    public enum ScreenCaptureStartParamsProfile: String, Codable, CaseIterable, Hashable, Sendable {
+        case constrainedBaseline = "constrained-baseline"
+        case main = "main"
+        case high = "high"
+    }
+
+    public enum ScreenSourceKind: String, Codable, CaseIterable, Hashable, Sendable {
+        case monitor = "monitor"
+        case window = "window"
+        case fake = "fake"
     }
 
     public enum ShelfKind: String, Codable, CaseIterable, Hashable, Sendable {
@@ -318,6 +425,18 @@ public enum HubRPC {
         case shelf = "shelf"
     }
 
+    /// open (default): open now where the OS allows it. notify: never open by itself, only offer it (notification / notch row with Open).
+    public enum UrlOpenParamsMode: String, Codable, CaseIterable, Hashable, Sendable {
+        case `open` = "open"
+        case notify = "notify"
+    }
+
+    /// opened: handed to the browser. notified: shown as a notification or row to tap.
+    public enum UrlOpenResultResult: String, Codable, CaseIterable, Hashable, Sendable {
+        case opened = "opened"
+        case notified = "notified"
+    }
+
     /// missing: in neither.
     public enum ZenFileState: String, Codable, CaseIterable, Hashable, Sendable {
         case inSync = "in_sync"
@@ -333,6 +452,235 @@ public enum HubRPC {
 
         public init(approval: String) {
             self.approval = approval
+        }
+    }
+
+    /// roc packet encoding: signed 16-bit PCM (RTP L16). payload_type 11 = roc's built-in mono 44100 Hz, 10 = built-in stereo 44100 Hz (what PipeWire's roc modules speak). 100-127 = a custom encoding both ends register with roc_context_register_encoding under that id using rate and channels; the dictation default is {rate 16000, channels 1, payload_type 100} for a libroc receiver feeding speech-to-text directly. Defaults when absent: mic 16000/1/100, speaker 44100/2/10.
+    public struct AudioEncoding: Codable, Hashable, Sendable {
+        /// 1 or 2.
+        public var channels: Int64
+        public var payloadType: Int64
+        /// Samples per second per channel: 16000, 44100 or 48000.
+        public var rate: Int64
+
+        public init(channels: Int64, payloadType: Int64, rate: Int64) {
+            self.channels = channels
+            self.payloadType = payloadType
+            self.rate = rate
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case channels
+            case payloadType = "payload_type"
+            case rate
+        }
+    }
+
+    /// Where a roc receiver listens (D-148). host is a tailnet address only (100.64.0.0/10 or fd7a:115c:a1e0::/48; loopback in the simulator): roc streams are plain UDP, so the tailnet's WireGuard is their encryption and their access control. Ports are UDP: source (audio packets; URI rtp+<fec>://host:port, or rtp:// with fec disable), repair (FEC packets; <fec>://host:port, absent with fec disable), control (RTCP; rtcp://host:port). The receiver binds them before it answers or asks.
+    public struct AudioEndpoint: Codable, Hashable, Sendable {
+        public var controlPort: Int64?
+        public var host: String
+        public var repairPort: Int64?
+        public var sourcePort: Int64
+
+        public init(controlPort: Int64? = nil, host: String, repairPort: Int64? = nil, sourcePort: Int64) {
+            self.controlPort = controlPort
+            self.host = host
+            self.repairPort = repairPort
+            self.sourcePort = sourcePort
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case controlPort = "control_port"
+            case host
+            case repairPort = "repair_port"
+            case sourcePort = "source_port"
+        }
+    }
+
+    /// roc link parameters, chosen by the side that starts the session. Defaults when absent: fec rs8m, packet_ms 10 (mic) / 5 (speaker), target_latency_ms 80 (mic, speech-to-text) / 200 (speaker, music).
+    public struct AudioLink: Codable, Hashable, Sendable {
+        public var fec: AudioLinkFec?
+        /// Audio per packet (sender's packet_length), 2-20 ms.
+        public var packetMs: Int64?
+        /// Receiver's target latency (its jitter buffer), 20-2000 ms.
+        public var targetLatencyMs: Int64?
+
+        public init(fec: AudioLinkFec? = nil, packetMs: Int64? = nil, targetLatencyMs: Int64? = nil) {
+            self.fec = fec
+            self.packetMs = packetMs
+            self.targetLatencyMs = targetLatencyMs
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case fec
+            case packetMs = "packet_ms"
+            case targetLatencyMs = "target_latency_ms"
+        }
+    }
+
+    public struct AudioRenewParams: Codable, Hashable, Sendable {
+        /// New lease length; absent keeps the session's.
+        public var leaseMs: Int64?
+        public var sessionId: String
+
+        public init(leaseMs: Int64? = nil, sessionId: String) {
+            self.leaseMs = leaseMs
+            self.sessionId = sessionId
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case leaseMs = "lease_ms"
+            case sessionId = "session_id"
+        }
+    }
+
+    public struct AudioRouteParams: Codable, Hashable, Sendable {
+        public var encoding: AudioEncoding?
+        /// The sender's tailnet address; the receiver may drop packets from anywhere else.
+        public var fromHost: String?
+        /// e.g. "Tower audio".
+        public var label: String?
+        /// As MicStartParams.lease_ms.
+        public var leaseMs: Int64?
+        public var link: AudioLink?
+        /// 0 or absent: no cap (speaker sessions can run all evening).
+        public var maxSeconds: Int64?
+        public var sessionId: String
+
+        public init(encoding: AudioEncoding? = nil, fromHost: String? = nil, label: String? = nil, leaseMs: Int64? = nil, link: AudioLink? = nil, maxSeconds: Int64? = nil, sessionId: String) {
+            self.encoding = encoding
+            self.fromHost = fromHost
+            self.label = label
+            self.leaseMs = leaseMs
+            self.link = link
+            self.maxSeconds = maxSeconds
+            self.sessionId = sessionId
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case encoding
+            case fromHost = "from_host"
+            case label
+            case leaseMs = "lease_ms"
+            case link
+            case maxSeconds = "max_seconds"
+            case sessionId = "session_id"
+        }
+    }
+
+    /// One mic or speaker session on the device that owns the hardware (D-148). Also Event.data of audio.session.
+    public struct AudioSession: Codable, Hashable, Sendable {
+        /// What is actually sent (mic) or expected (speaker).
+        public var encoding: AudioEncoding?
+        /// max_seconds cap, when there is one.
+        public var endsAt: String?
+        public var kind: AudioSessionKind
+        public var leaseExpires: String?
+        public var link: AudioLink?
+        /// speaker: where this device's receiver listens.
+        public var local: AudioEndpoint?
+        /// Device id that started it.
+        public var peer: String
+        /// stopped / failed / needs_user: what happened, in plain words.
+        public var reason: String?
+        /// mic: where the audio goes (the caller's receiver).
+        public var remote: AudioEndpoint?
+        public var sessionId: String
+        public var startedAt: String?
+        /// needs_user: the OS needs a tap on the device first (Android can refuse to open the mic for an app in the background); the notification says what to tap. live: audio is flowing.
+        public var state: AudioSessionState
+        /// stopped / failed only.
+        public var stopReason: AudioStopReason?
+
+        public init(encoding: AudioEncoding? = nil, endsAt: String? = nil, kind: AudioSessionKind, leaseExpires: String? = nil, link: AudioLink? = nil, local: AudioEndpoint? = nil, peer: String, reason: String? = nil, remote: AudioEndpoint? = nil, sessionId: String, startedAt: String? = nil, state: AudioSessionState, stopReason: AudioStopReason? = nil) {
+            self.encoding = encoding
+            self.endsAt = endsAt
+            self.kind = kind
+            self.leaseExpires = leaseExpires
+            self.link = link
+            self.local = local
+            self.peer = peer
+            self.reason = reason
+            self.remote = remote
+            self.sessionId = sessionId
+            self.startedAt = startedAt
+            self.state = state
+            self.stopReason = stopReason
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case encoding
+            case endsAt = "ends_at"
+            case kind
+            case leaseExpires = "lease_expires"
+            case link
+            case local
+            case peer
+            case reason
+            case remote
+            case sessionId = "session_id"
+            case startedAt = "started_at"
+            case state
+            case stopReason = "stop_reason"
+        }
+    }
+
+    public struct AudioStatusResult: Codable, Hashable, Sendable {
+        /// Encodings this device can send and receive.
+        public var encodings: [AudioEncoding]?
+        /// mic.start would work now (no call or other app holding the mic, permission granted or grantable with a tap).
+        public var micAvailable: Bool
+        /// needs_user: a session will start in state needs_user (see AudioSession.state).
+        public var micPermission: AudioStatusResultMicPermission?
+        public var rocVersion: String?
+        /// Live sessions plus the ones that ended in the last 10 minutes.
+        public var sessions: [AudioSession]
+        public var speakerAvailable: Bool
+
+        public init(encodings: [AudioEncoding]? = nil, micAvailable: Bool, micPermission: AudioStatusResultMicPermission? = nil, rocVersion: String? = nil, sessions: [AudioSession], speakerAvailable: Bool) {
+            self.encodings = encodings
+            self.micAvailable = micAvailable
+            self.micPermission = micPermission
+            self.rocVersion = rocVersion
+            self.sessions = sessions
+            self.speakerAvailable = speakerAvailable
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case encodings
+            case micAvailable = "mic_available"
+            case micPermission = "mic_permission"
+            case rocVersion = "roc_version"
+            case sessions
+            case speakerAvailable = "speaker_available"
+        }
+    }
+
+    public struct AudioStopParams: Codable, Hashable, Sendable {
+        /// Plain words for the device's log, e.g. "dictation finished".
+        public var reason: String?
+        public var sessionId: String
+
+        public init(reason: String? = nil, sessionId: String) {
+            self.reason = reason
+            self.sessionId = sessionId
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case reason
+            case sessionId = "session_id"
+        }
+    }
+
+    public struct AudioStopResult: Codable, Hashable, Sendable {
+        public var session: AudioSession?
+        /// true when this call ended a running session.
+        public var stopped: Bool
+
+        public init(session: AudioSession? = nil, stopped: Bool) {
+            self.session = session
+            self.stopped = stopped
         }
     }
 
@@ -1162,6 +1510,50 @@ public enum HubRPC {
         }
     }
 
+    public struct MicStartParams: Codable, Hashable, Sendable {
+        /// What to send. A device that can't capture at this rate resamples; one that can't send it at all answers invalid_params naming what it can (audio.status.encodings).
+        public var encoding: AudioEncoding?
+        /// Short text for the indicator, e.g. "Dictation on tower".
+        public var label: String?
+        /// Lease: the device stops the mic when no audio.renew (or repeated mic.start) came for this long. Default 15000, clamped to 5000-60000.
+        public var leaseMs: Int64?
+        public var link: AudioLink?
+        /// Hard cap on the session regardless of renewals. Default 300, clamped to 10-3600.
+        public var maxSeconds: Int64?
+        /// Shown in the device's indicator and kept in its log (dictation default).
+        public var purpose: MicStartParamsPurpose?
+        /// Chosen by the caller (uppercase UUID); names the session in every later call and event.
+        public var sessionId: String
+        /// speech (default): capture tuned for recognition (Android AudioSource.VOICE_RECOGNITION: no echo cancelling, steady gain). call: echo cancelling and noise suppression on (VOICE_COMMUNICATION), for calls with the speaker also routed.
+        public var source: MicStartParamsSource?
+        /// The caller's receiver, already bound.
+        public var to: AudioEndpoint
+
+        public init(encoding: AudioEncoding? = nil, label: String? = nil, leaseMs: Int64? = nil, link: AudioLink? = nil, maxSeconds: Int64? = nil, purpose: MicStartParamsPurpose? = nil, sessionId: String, source: MicStartParamsSource? = nil, to: AudioEndpoint) {
+            self.encoding = encoding
+            self.label = label
+            self.leaseMs = leaseMs
+            self.link = link
+            self.maxSeconds = maxSeconds
+            self.purpose = purpose
+            self.sessionId = sessionId
+            self.source = source
+            self.to = to
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case encoding
+            case label
+            case leaseMs = "lease_ms"
+            case link
+            case maxSeconds = "max_seconds"
+            case purpose
+            case sessionId = "session_id"
+            case source
+            case to
+        }
+    }
+
     public struct Notification: Codable, Hashable, Sendable {
         /// App id (Android package name).
         public var app: String
@@ -1484,6 +1876,25 @@ public enum HubRPC {
         }
     }
 
+    public struct PowerOffParams: Codable, Hashable, Sendable {
+        /// poweroff (default) or reboot into the same OS.
+        public var mode: PowerOffParamsMode?
+
+        public init(mode: PowerOffParamsMode? = nil) {
+            self.mode = mode
+        }
+    }
+
+    public struct PowerOffResult: Codable, Hashable, Sendable {
+        public var accepted: Bool
+        public var state: PowerState
+
+        public init(accepted: Bool, state: PowerState) {
+            self.accepted = accepted
+            self.state = state
+        }
+    }
+
     /// The ESP32 wake relay on the home LAN, as the server sees it (D-145).
     public struct PowerRelay: Codable, Hashable, Sendable {
         public var lastSeen: String?
@@ -1679,6 +2090,246 @@ public enum HubRPC {
 
         public init(undone: Bool) {
             self.undone = undone
+        }
+    }
+
+    public struct ScreenCaptureStartParams: Codable, Hashable, Sendable {
+        public var bitrateKbps: Int64?
+        public var fps: Int64?
+        public var height: Int64?
+        /// TCP port on 127.0.0.1 to connect to.
+        public var ingestPort: Int64
+        /// Sent back in the hello line (docs/SCREEN.md).
+        public var ingestToken: String
+        /// H.264 profile the viewer negotiated.
+        public var profile: ScreenCaptureStartParamsProfile?
+        public var session: String
+        /// A ScreenSource.id from screen.capture.sources.
+        public var source: String
+        /// Output size; 0 = the source's own.
+        public var width: Int64?
+
+        public init(bitrateKbps: Int64? = nil, fps: Int64? = nil, height: Int64? = nil, ingestPort: Int64, ingestToken: String, profile: ScreenCaptureStartParamsProfile? = nil, session: String, source: String, width: Int64? = nil) {
+            self.bitrateKbps = bitrateKbps
+            self.fps = fps
+            self.height = height
+            self.ingestPort = ingestPort
+            self.ingestToken = ingestToken
+            self.profile = profile
+            self.session = session
+            self.source = source
+            self.width = width
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case bitrateKbps = "bitrate_kbps"
+            case fps
+            case height
+            case ingestPort = "ingest_port"
+            case ingestToken = "ingest_token"
+            case profile
+            case session
+            case source
+            case width
+        }
+    }
+
+    public struct ScreenCaptureStartResult: Codable, Hashable, Sendable {
+        public var accepted: Bool
+
+        public init(accepted: Bool) {
+            self.accepted = accepted
+        }
+    }
+
+    /// Event.data of the screen topic.
+    public struct ScreenEvent: Codable, Hashable, Sendable {
+        public var name: String?
+        public var reason: String?
+        public var session: String
+        public var source: String
+        /// Viewer device id (empty: a local caller).
+        public var viewer: String?
+
+        public init(name: String? = nil, reason: String? = nil, session: String, source: String, viewer: String? = nil) {
+            self.name = name
+            self.reason = reason
+            self.session = session
+            self.source = source
+            self.viewer = viewer
+        }
+    }
+
+    /// One streamable thing on a device (hubcast). id is opaque to callers and only meaningful to the device that listed it: monitor:<name>, window:<address>, fake:<name>.
+    public struct ScreenSource: Codable, Hashable, Sendable {
+        /// Windows: the app (Hyprland class, macOS bundle name).
+        public var app: String?
+        public var focused: Bool?
+        public var height: Int64?
+        public var id: String
+        public var kind: ScreenSourceKind
+        /// Windows: the monitor it is on.
+        public var monitor: String?
+        /// Monitor name (HDMI-A-2) or window title.
+        public var name: String
+        public var refreshHz: Double?
+        /// false: listed but cannot start now; why says what to do.
+        public var streamable: Bool
+        public var why: String?
+        /// Pixels (monitors: the mode; windows: the current size in layout pixels).
+        public var width: Int64?
+
+        public init(app: String? = nil, focused: Bool? = nil, height: Int64? = nil, id: String, kind: ScreenSourceKind, monitor: String? = nil, name: String, refreshHz: Double? = nil, streamable: Bool, why: String? = nil, width: Int64? = nil) {
+            self.app = app
+            self.focused = focused
+            self.height = height
+            self.id = id
+            self.kind = kind
+            self.monitor = monitor
+            self.name = name
+            self.refreshHz = refreshHz
+            self.streamable = streamable
+            self.why = why
+            self.width = width
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case app
+            case focused
+            case height
+            case id
+            case kind
+            case monitor
+            case name
+            case refreshHz = "refresh_hz"
+            case streamable
+            case why
+            case width
+        }
+    }
+
+    public struct ScreenSourcesResult: Codable, Hashable, Sendable {
+        /// The capture backend in use: portal (PipeWire + NVENC via the hub picker), gsr (gpu-screen-recorder, monitors only), notch (Mac), fake (simulator), none.
+        public var capture: String?
+        /// Codecs this device can send, e.g. h264.
+        public var codecs: [String]?
+        public var sources: [ScreenSource]
+
+        public init(capture: String? = nil, codecs: [String]? = nil, sources: [ScreenSource]) {
+            self.capture = capture
+            self.codecs = codecs
+            self.sources = sources
+        }
+    }
+
+    public struct ScreenStartParams: Codable, Hashable, Sendable {
+        /// Start bitrate (default: from the output size; later slices adapt it to the link).
+        public var bitrateKbps: Int64?
+        /// Wanted frame rate (default: the monitor's, capped at 60).
+        public var fps: Int64?
+        /// The viewer's complete WebRTC offer (recvonly video; gathering finished).
+        public var sdp: String
+        /// A ScreenSource.id from screen.sources.
+        public var source: String
+        public var viewer: ScreenViewerInfo?
+
+        public init(bitrateKbps: Int64? = nil, fps: Int64? = nil, sdp: String, source: String, viewer: ScreenViewerInfo? = nil) {
+            self.bitrateKbps = bitrateKbps
+            self.fps = fps
+            self.sdp = sdp
+            self.source = source
+            self.viewer = viewer
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case bitrateKbps = "bitrate_kbps"
+            case fps
+            case sdp
+            case source
+            case viewer
+        }
+    }
+
+    public struct ScreenStartResult: Codable, Hashable, Sendable {
+        public var bitrateKbps: Int64?
+        public var capture: String?
+        /// e.g. h264 high (640c1f).
+        public var codec: String?
+        public var fps: Int64?
+        public var height: Int64?
+        /// The complete answer (tailnet host candidates only).
+        public var sdp: String
+        public var session: String
+        public var width: Int64?
+
+        public init(bitrateKbps: Int64? = nil, capture: String? = nil, codec: String? = nil, fps: Int64? = nil, height: Int64? = nil, sdp: String, session: String, width: Int64? = nil) {
+            self.bitrateKbps = bitrateKbps
+            self.capture = capture
+            self.codec = codec
+            self.fps = fps
+            self.height = height
+            self.sdp = sdp
+            self.session = session
+            self.width = width
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case bitrateKbps = "bitrate_kbps"
+            case capture
+            case codec
+            case fps
+            case height
+            case sdp
+            case session
+            case width
+        }
+    }
+
+    public struct ScreenStopParams: Codable, Hashable, Sendable {
+        public var session: String
+
+        public init(session: String) {
+            self.session = session
+        }
+    }
+
+    public struct ScreenStopResult: Codable, Hashable, Sendable {
+        /// Encoded bytes sent.
+        public var bytes: Int64?
+        /// Frames sent in this session.
+        public var frames: Int64?
+        public var seconds: Double?
+        public var stopped: Bool
+
+        public init(bytes: Int64? = nil, frames: Int64? = nil, seconds: Double? = nil, stopped: Bool) {
+            self.bytes = bytes
+            self.frames = frames
+            self.seconds = seconds
+            self.stopped = stopped
+        }
+    }
+
+    /// What the viewer can show; the stream is scaled down to width*dpr x height*dpr when the source is larger (never up).
+    public struct ScreenViewerInfo: Codable, Hashable, Sendable {
+        /// Device pixel ratio (2 on a Retina Mac).
+        public var dpr: Double?
+        public var height: Int64?
+        /// CSS pixels of the video area.
+        public var width: Int64?
+
+        public init(dpr: Double? = nil, height: Int64? = nil, width: Int64? = nil) {
+            self.dpr = dpr
+            self.height = height
+            self.width = width
+        }
+    }
+
+    public struct ScreenViewerResult: Codable, Hashable, Sendable {
+        /// http://127.0.0.1:<port>/#k=<key>; empty when the viewer listener is off.
+        public var url: String
+
+        public init(url: String) {
+            self.url = url
         }
     }
 
@@ -2181,6 +2832,33 @@ public enum HubRPC {
 
         public init(transfers: [TransferInfo]) {
             self.transfers = transfers
+        }
+    }
+
+    public struct UrlOpenParams: Codable, Hashable, Sendable {
+        /// Sender device id for the toast ("Opened from phone"). Through peer.call the receiver uses the authenticated origin and ignores a different value.
+        public var from: String?
+        /// open (default): open now where the OS allows it. notify: never open by itself, only offer it (notification / notch row with Open).
+        public var mode: UrlOpenParamsMode?
+        /// Page title when the sender knows it, for the notification or toast.
+        public var title: String?
+        /// Absolute http(s) URL, at most 8192 bytes.
+        public var url: String
+
+        public init(from: String? = nil, mode: UrlOpenParamsMode? = nil, title: String? = nil, url: String) {
+            self.from = from
+            self.mode = mode
+            self.title = title
+            self.url = url
+        }
+    }
+
+    public struct UrlOpenResult: Codable, Hashable, Sendable {
+        /// opened: handed to the browser. notified: shown as a notification or row to tap.
+        public var result: UrlOpenResultResult
+
+        public init(result: UrlOpenResultResult) {
+            self.result = result
         }
     }
 
