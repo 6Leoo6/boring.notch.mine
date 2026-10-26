@@ -373,7 +373,7 @@ enum AgentBridgeRouter {
     /// (the sandboxed notch can't long-poll the helper). The notch keeps no event stream of its
     /// own, so the events drive the hub peek and are not kept; other topics are accepted and
     /// ignored. A malformed batch is refused whole, nothing of it shown.
-    /// `dictate.state` (hub D-166): the tower's dictation, live in the closed notch
+    /// `dictate.state` (hub D-169): the tower's dictation, live in the closed notch
     /// (`DictationActivity`). Forwarded by the hub helper from the tower's `peer.call`.
     private static func dictateState(_ args: Args) async throws -> Payload {
         guard let id = args.string("session_id"), !id.isEmpty else {

@@ -8,7 +8,7 @@ import Foundation
 import SwiftUI
 
 /// "Tower listening": the tower's dictation (hub-dictate, push-to-talk) shown live in the
-/// closed notch while its mic is open (hub D-166).
+/// closed notch while its mic is open (hub D-169).
 ///
 /// The tower calls `dictate.state` on this Mac through the hub; the helper forwards it to the
 /// agent bridge (`AgentBridgeRouter`), which lands here. `listening` arrives at the start and

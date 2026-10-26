@@ -128,7 +128,7 @@ struct ContentView: View {
         glowPulse ? CGSize(width: 1.5, height: -1) : CGSize(width: -1.5, height: 1)
     }
 
-    /// The tower is dictating (hub D-166): its strip takes the closed island over the music
+    /// The tower is dictating (hub D-169): its strip takes the closed island over the music
     /// one for as long as it listens. Battery's expanding view still wins (checked first).
     private var dictationStripIsLive: Bool {
         dictation.isActive && vm.notchState == .closed && !vm.hideOnClosed
@@ -819,7 +819,7 @@ struct ContentView: View {
         )
     }
 
-    /// The tower is listening (hub D-166): the mic where the music strip has its artwork, the
+    /// The tower is listening (hub D-169): the mic where the music strip has its artwork, the
     /// voice level where it has the visualizer, the notch's black body between them. Same
     /// geometry as `MusicLiveActivity`, so the island keeps its size when one replaces the other.
     @ViewBuilder
