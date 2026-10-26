@@ -218,12 +218,13 @@ struct DictationPeekView: View {
     var body: some View {
         if let session = activity.session {
             HStack(spacing: 7) {
-                Image("hub.mic")
+                // Who is listening; the strip above already carries the mic.
+                Image("hub.tower")
                     .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: Self.iconSide, height: Self.iconSide)
-                    .foregroundStyle(dictationTint)
+                    .foregroundStyle(.white.opacity(0.8))
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 4) {
                         Text("Tower listening")
