@@ -160,7 +160,8 @@ final class HubActivity: ObservableObject {
                               size: event.size, from: from, fromKind: event.fromKind)
         case .transferFailed:
             transferFailed(id: event.transferId, cancelled: event.code == .cancelled)
-        case nil:
+        default:
+            // Other topics (audio, screen, wifi, ...) and types this build doesn't know.
             break
         }
     }
