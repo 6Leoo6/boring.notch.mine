@@ -655,7 +655,7 @@ public enum HubRPC {
         public var state: ActivityUpdateParamsState
         /// Second line, e.g. "14 % · not charging" (at most 120 characters are shown).
         public var subtitle: String?
-        /// First line, e.g. "Phone battery low" (required with active; at most 80 characters are shown).
+        /// First line, e.g. "Phone battery low" (at most 80 characters are shown). Missing: an update keeps the title already shown; a new activity shows its kind's name.
         public var title: String?
         /// How long this update stays valid, 1000..600000 (default 30000; out of range is clamped). With no further update in that time the receiver clears it as if ended. Producers that keep it up resend before it runs out.
         public var ttlMs: Int64?

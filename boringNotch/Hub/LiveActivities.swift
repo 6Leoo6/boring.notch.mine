@@ -29,6 +29,19 @@ final class LiveActivityCenter: ObservableObject {
 
         var rank: Int { Self.allCases.firstIndex(of: self) ?? Self.allCases.count }
 
+        /// The title of an activity that came without one.
+        var label: String {
+            switch self {
+            case .dictation: return "Dictation"
+            case .transfer: return "Transfer"
+            case .battery: return "Battery"
+            case .ci: return "CI"
+            case .job: return "Job"
+            case .alert: return "Alert"
+            case .other: return "Live activity"
+            }
+        }
+
         /// Hub icon (`HubIcons.xcassets`) when the producer names none or one this build lacks.
         var icon: String {
             switch self {
@@ -128,7 +141,6 @@ final class LiveActivityCenter: ObservableObject {
         default:
             throw Failure.invalid("state must be active or ended, not \(u.state)")
         }
-        guard let title = Self.clean(u.title) else { throw Failure.invalid("title is required with state active") }
         guard enabled else {
             clearAll()
             return false
@@ -141,6 +153,8 @@ final class LiveActivityCenter: ObservableObject {
         let reported: Date? = u.elapsedMs.map { now.addingTimeInterval(-Double(max(0, $0)) / 1000) }
             ?? u.startedAt.flatMap(Self.parseDate)
         let existing = activities.first { $0.id == id }
+        // No title: an update keeps the one shown, a new activity is named after its kind.
+        let title = Self.clean(u.title) ?? existing?.title ?? kind.label
         var startedAt = reported
         if let reported, let previous = existing?.startedAt,
            abs(reported.timeIntervalSince(previous)) <= Self.reanchorDrift {
