@@ -116,6 +116,8 @@ final class DictationActivity: ObservableObject {
         if coordinator.sneakPeek.show && coordinator.sneakPeek.type == .dictation {
             coordinator.toggleSneakPeek(status: false, type: .dictation)
         }
+        // The live activities waited behind it: the next one comes up.
+        LiveActivityCenter.shared.refresh()
     }
 
     // MARK: - Private
@@ -136,7 +138,9 @@ final class DictationActivity: ObservableObject {
     private func present(ttl: TimeInterval) {
         let coordinator = BoringViewCoordinator.shared
         let ours = coordinator.sneakPeek.show && coordinator.sneakPeek.type == .dictation
-        if coordinator.sneakPeek.show && !ours { return }
+        // Dictation comes first (hub D-170): it takes the slot from a live activity.
+        let live = coordinator.sneakPeek.show && coordinator.sneakPeek.type == .live
+        if coordinator.sneakPeek.show && !ours && !live { return }
         if ours && Date().timeIntervalSince(lastPresent) < 1 { return }
         lastPresent = Date()
         coordinator.toggleSneakPeek(status: true, type: .dictation, duration: ttl + 2)
@@ -211,6 +215,7 @@ struct DictationLevelBars: View {
 /// music and hub peeks: 11 semibold white over 9 at half white.
 struct DictationPeekView: View {
     @ObservedObject var activity = DictationActivity.shared
+    @ObservedObject var live = LiveActivityCenter.shared
 
     private static let maxTextColumn: CGFloat = 190
     private static let iconSide: CGFloat = 18
@@ -242,6 +247,8 @@ struct DictationPeekView: View {
                         .truncationMode(.middle)
                         .frame(maxWidth: Self.maxTextColumn, alignment: .leading)
                 }
+                // The live activities waiting behind the dictation (hub D-170).
+                LiveCountBadge(count: live.activities.count)
             }
             .padding(.vertical, 1)
             .fixedSize()

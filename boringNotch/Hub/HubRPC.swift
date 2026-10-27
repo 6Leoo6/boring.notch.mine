@@ -13,6 +13,8 @@ public enum HubRPC {
 
     /// Every method in x-methods (raw value = wire name).
     public enum Method: String, Codable, CaseIterable, Hashable, Sendable {
+        case activityEnd = "activity.end"
+        case activityUpdate = "activity.update"
         case audioRenew = "audio.renew"
         case audioRoute = "audio.route"
         case audioStatus = "audio.status"
@@ -68,6 +70,7 @@ public enum HubRPC {
         case screenSources = "screen.sources"
         case screenStart = "screen.start"
         case screenStop = "screen.stop"
+        case screenThumbnails = "screen.thumbnails"
         case screenViewer = "screen.viewer"
         case shelfGet = "shelf.get"
         case shelfList = "shelf.list"
@@ -92,6 +95,8 @@ public enum HubRPC {
         /// Module that owns the method.
         public var module: String {
             switch self {
+            case .activityEnd: return "peek"
+            case .activityUpdate: return "peek"
             case .audioRenew: return "audio"
             case .audioRoute: return "audio"
             case .audioStatus: return "audio"
@@ -147,6 +152,7 @@ public enum HubRPC {
             case .screenSources: return "screen"
             case .screenStart: return "screen"
             case .screenStop: return "screen"
+            case .screenThumbnails: return "screen"
             case .screenViewer: return "screen"
             case .shelfGet: return "shelf"
             case .shelfList: return "shelf"
@@ -197,6 +203,23 @@ public enum HubRPC {
             case .wifiHotspot: return "wifi"
             }
         }
+    }
+
+    /// What the activity is; decides its priority (this order, dictation first) and its default icon. A receiver that doesn't know a kind treats it as other.
+    public enum ActivityKind: String, Codable, CaseIterable, Hashable, Sendable {
+        case dictation = "dictation"
+        case transfer = "transfer"
+        case battery = "battery"
+        case ci = "ci"
+        case job = "job"
+        case alert = "alert"
+        case other = "other"
+    }
+
+    /// active: show or refresh. ended: take it down now.
+    public enum ActivityUpdateParamsState: String, Codable, CaseIterable, Hashable, Sendable {
+        case active = "active"
+        case ended = "ended"
     }
 
     public enum AudioLinkFec: String, Codable, CaseIterable, Hashable, Sendable {
@@ -569,6 +592,105 @@ public enum HubRPC {
         case missingInProfile = "missing_in_profile"
         case missingInSource = "missing_in_source"
         case missing = "missing"
+    }
+
+    public struct ActivityAction: Codable, Hashable, Sendable {
+        /// Stable id of the action (open, retry, ...).
+        public var id: String
+        /// Short button text ("Open"); at most 16 characters are shown.
+        public var label: String
+        /// What a tap opens on the receiving device: https:// only (a CI run, a web page); other schemes are ignored and the action isn't shown.
+        public var url: String
+
+        public init(id: String, label: String, url: String) {
+            self.id = id
+            self.label = label
+            self.url = url
+        }
+    }
+
+    public struct ActivityEndParams: Codable, Hashable, Sendable {
+        public var id: String
+        /// As in ActivityUpdateParams: set by the receiving helper.
+        public var source: String?
+
+        public init(id: String, source: String? = nil) {
+            self.id = id
+            self.source = source
+        }
+    }
+
+    public struct ActivityResult: Codable, Hashable, Sendable {
+        /// Live activities up on the device after the call (dictation included).
+        public var count: Int64?
+        /// true while this activity is up after the call; false after ended, or when the owner turned live activities off on this device. A relay: true if any target shows it.
+        public var shown: Bool
+
+        public init(count: Int64? = nil, shown: Bool) {
+            self.count = count
+            self.shown = shown
+        }
+    }
+
+    public struct ActivityUpdateParams: Codable, Hashable, Sendable {
+        /// Device id the activity is about (the receiver of a transfer). A relay never sends it to that device, which reports such things on its own.
+        public var about: String?
+        /// At most 2; the first is the tap action.
+        public var actions: [ActivityAction]?
+        /// Time since it began; the receiver anchors its timer on it, so clock skew doesn't matter.
+        public var elapsedMs: Int64?
+        /// A hub icon set name (brand/svg/icons, without the hub. prefix: phone, tower, battery, job, shelf, check, error, ...). Unknown or missing: the kind's icon.
+        public var icon: String?
+        /// The producer's stable id for this activity (at most 128 characters), e.g. transfer-<transfer_id>, battery-phone-low. The same id updates it in place.
+        public var id: String
+        /// Default other.
+        public var kind: ActivityKind?
+        /// 0..1 (clamped) draws a progress line; missing: none.
+        public var progress: Double?
+        /// Device id of the producer. Set by the receiving helper from the authenticated caller (whatever the caller put there is replaced); empty for a local caller.
+        public var source: String?
+        /// When it began, on the sender's clock: the notch shows a running m:ss. Used only when elapsed_ms is missing.
+        public var startedAt: String?
+        /// active: show or refresh. ended: take it down now.
+        public var state: ActivityUpdateParamsState
+        /// Second line, e.g. "14 % · not charging" (at most 120 characters are shown).
+        public var subtitle: String?
+        /// First line, e.g. "Phone battery low" (at most 80 characters are shown). Missing: an update keeps the title already shown; a new activity shows its kind's name.
+        public var title: String?
+        /// How long this update stays valid, 1000..600000 (default 30000; out of range is clamped). With no further update in that time the receiver clears it as if ended. Producers that keep it up resend before it runs out.
+        public var ttlMs: Int64?
+
+        public init(about: String? = nil, actions: [ActivityAction]? = nil, elapsedMs: Int64? = nil, icon: String? = nil, id: String, kind: ActivityKind? = nil, progress: Double? = nil, source: String? = nil, startedAt: String? = nil, state: ActivityUpdateParamsState, subtitle: String? = nil, title: String? = nil, ttlMs: Int64? = nil) {
+            self.about = about
+            self.actions = actions
+            self.elapsedMs = elapsedMs
+            self.icon = icon
+            self.id = id
+            self.kind = kind
+            self.progress = progress
+            self.source = source
+            self.startedAt = startedAt
+            self.state = state
+            self.subtitle = subtitle
+            self.title = title
+            self.ttlMs = ttlMs
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case about
+            case actions
+            case elapsedMs = "elapsed_ms"
+            case icon
+            case id
+            case kind
+            case progress
+            case source
+            case startedAt = "started_at"
+            case state
+            case subtitle
+            case title
+            case ttlMs = "ttl_ms"
+        }
     }
 
     public struct ApprovedParams: Codable, Hashable, Sendable {
@@ -2554,6 +2676,77 @@ public enum HubRPC {
             self.frames = frames
             self.seconds = seconds
             self.stopped = stopped
+        }
+    }
+
+    public struct ScreenThumbnail: Codable, Hashable, Sendable {
+        public var capturedAt: String?
+        /// The picture, std base64; empty when protected or failed.
+        public var dataBase64: String?
+        /// Why there is no picture (e.g. the window closed, unknown source).
+        public var error: String?
+        public var height: Int64?
+        /// image/jpeg; empty when protected or failed.
+        public var mime: String?
+        /// A window this device keeps private: show a placeholder.
+        public var protected: Bool?
+        /// A ScreenSource.id.
+        public var source: String
+        public var width: Int64?
+
+        public init(capturedAt: String? = nil, dataBase64: String? = nil, error: String? = nil, height: Int64? = nil, mime: String? = nil, protected: Bool? = nil, source: String, width: Int64? = nil) {
+            self.capturedAt = capturedAt
+            self.dataBase64 = dataBase64
+            self.error = error
+            self.height = height
+            self.mime = mime
+            self.protected = protected
+            self.source = source
+            self.width = width
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case capturedAt = "captured_at"
+            case dataBase64 = "data_base64"
+            case error
+            case height
+            case mime
+            case protected
+            case source
+            case width
+        }
+    }
+
+    public struct ScreenThumbnailsParams: Codable, Hashable, Sendable {
+        /// Pixels, clamped to 16-1024.
+        public var maxH: Int64
+        /// Pixels, clamped to 16-1024; the picture is fitted into max_w x max_h, keeping its aspect.
+        public var maxW: Int64
+        /// JPEG quality, clamped to 10-95 (default 60).
+        public var quality: Int64?
+        /// ScreenSource ids; missing or empty: every source screen.sources lists.
+        public var sources: [String]?
+
+        public init(maxH: Int64, maxW: Int64, quality: Int64? = nil, sources: [String]? = nil) {
+            self.maxH = maxH
+            self.maxW = maxW
+            self.quality = quality
+            self.sources = sources
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case maxH = "max_h"
+            case maxW = "max_w"
+            case quality
+            case sources
+        }
+    }
+
+    public struct ScreenThumbnailsResult: Codable, Hashable, Sendable {
+        public var thumbnails: [ScreenThumbnail]
+
+        public init(thumbnails: [ScreenThumbnail]) {
+            self.thumbnails = thumbnails
         }
     }
 

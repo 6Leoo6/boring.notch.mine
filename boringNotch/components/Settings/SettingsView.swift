@@ -993,6 +993,9 @@ struct Shelf: View {
                 Defaults.Toggle(key: .showTowerDictation) {
                     Text("Show when the tower is listening (dictation)")
                 }
+                Defaults.Toggle(key: .showLiveActivities) {
+                    Text("Show live activities from your other devices")
+                }
 
             } header: {
                 HStack {

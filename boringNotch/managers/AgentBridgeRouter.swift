@@ -72,9 +72,12 @@ enum AgentBridgeRouter {
         case "shelf.remove": return try await shelfRemove(args)
         case "events.push": return try await eventsPush(args)
         case "dictate.state": return try await dictateState(args)
+        case "activity.update": return try await activityUpdate(args)
+        case "activity.end": return try await activityEnd(args)
         #if DEBUG
         case "debug.hub_peek": return await debugHubPeek(args)
         case "debug.hub_peek_render": return await debugHubPeekRender()
+        case "debug.live_render": return await debugLiveRender()
         case "debug.tower": return await debugTower(args)
         case "debug.tower_render": return await debugTowerRender()
         #endif
@@ -401,6 +404,38 @@ enum AgentBridgeRouter {
         return Payload(value: ["shown": shown])
     }
 
+    /// `activity.update` (hub D-170): another device's live activity (`LiveActivityCenter`).
+    /// The hub helper forwards it with `source` set to the calling device; a local caller has none.
+    private static func activityUpdate(_ args: Args) async throws -> Payload {
+        guard let id = args.string("id") else { throw BridgeError("id is required", code: "invalid_params") }
+        guard let state = args.string("state") else {
+            throw BridgeError("state is required: active or ended", code: "invalid_params")
+        }
+        let update = LiveActivityCenter.Update(
+            source: args.string("source") ?? "", id: id, state: state, kind: args.string("kind"),
+            title: args.string("title"), subtitle: args.string("subtitle"),
+            progress: (args.raw["progress"] as? NSNumber)?.doubleValue, icon: args.string("icon"),
+            startedAt: args.string("started_at"), elapsedMs: args.int("elapsed_ms"), ttlMs: args.int("ttl_ms"),
+            actions: (args.raw["actions"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? [])
+        return try await MainActor.run {
+            do {
+                let shown = try LiveActivityCenter.shared.update(update)
+                return Payload(value: ["shown": shown, "count": LiveActivityCenter.shared.count])
+            } catch LiveActivityCenter.Failure.invalid(let message) {
+                throw BridgeError(message, code: "invalid_params")
+            }
+        }
+    }
+
+    private static func activityEnd(_ args: Args) async throws -> Payload {
+        guard let id = args.string("id"), !id.isEmpty else { throw BridgeError("id is required", code: "invalid_params") }
+        let source = args.string("source") ?? ""
+        return await MainActor.run {
+            LiveActivityCenter.shared.end(source: source, id: id)
+            return Payload(value: ["shown": false, "count": LiveActivityCenter.shared.count])
+        }
+    }
+
     private static func eventsPush(_ args: Args) async throws -> Payload {
         guard let raw = args.raw["events"] as? [Any] else {
             throw BridgeError("events is required: an array of {topic, type, data}")
@@ -470,6 +505,35 @@ enum AgentBridgeRouter {
         ]
         if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
            let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) {
+            out["png_base64"] = png.base64EncodedString()
+        }
+        return Payload(value: out)
+    }
+
+    /// The live activity peek drawn off screen (no need to look at the owner's screen), plus
+    /// what the center holds.
+    @MainActor
+    private static func debugLiveRender() -> Payload {
+        let center = LiveActivityCenter.shared
+        let coordinator = BoringViewCoordinator.shared
+        var out: [String: Any] = [
+            "count": center.count,
+            "activities": center.activities.map { a -> [String: Any] in
+                ["id": a.id, "kind": a.kind.rawValue, "title": a.title, "subtitle": a.subtitle as Any? ?? NSNull(),
+                 "progress": a.progress as Any? ?? NSNull(), "icon": a.icon, "actions": a.actions.map(\.label),
+                 "expires_in": a.expires.timeIntervalSinceNow]
+            },
+            "peek": coordinator.sneakPeek.show ? "\(coordinator.sneakPeek.type)" as Any : NSNull(),
+        ]
+        let view: AnyView = DictationActivity.shared.isActive
+            ? AnyView(DictationPeekView()) : AnyView(LivePeekView())
+        let renderer = ImageRenderer(content: view
+            .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 10)
+            .background(Color.black))
+        renderer.scale = 2
+        if center.top != nil || DictationActivity.shared.isActive, let image = renderer.nsImage,
+           let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
             out["png_base64"] = png.base64EncodedString()
         }
         return Payload(value: out)
