@@ -621,6 +621,21 @@ struct ContentView: View {
                                           .combined(with: .scale(scale: 0.94, anchor: .top))
                                   )
                           }
+                          else if coordinator.sneakPeek.type == .live && vm.notchState == .closed && !vm.hideOnClosed {
+                              // Another device's live activity (hub D-170): same slot and entrance.
+                              LivePeekView()
+                                  .frame(
+                                      minWidth: max(closedStripWidth, vm.closedNotchSize.width),
+                                      alignment: .center
+                                  )
+                                  .padding(.top, 4)
+                                  .padding(.bottom, 10)
+                                  .transition(
+                                      .move(edge: .top)
+                                          .combined(with: .opacity)
+                                          .combined(with: .scale(scale: 0.94, anchor: .top))
+                                  )
+                          }
                           else if coordinator.sneakPeek.type == .hub && vm.notchState == .closed && !vm.hideOnClosed {
                               // Same slot, frame and entrance as the music peek above, so an
                               // arrival reads like a track change. Tapping it opens the shelf.

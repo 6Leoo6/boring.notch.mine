@@ -22,12 +22,14 @@ enum SneakContentType {
     case hub
     /// The tower is dictating (`DictationActivity`, `DictationPeekView`).
     case dictation
+    /// A live activity from another device (`LiveActivityCenter`, `LivePeekView`, hub D-170).
+    case live
 }
 
 extension SneakContentType {
     /// Drawn by the system-event HUD (inline or the indicator below the island). Music,
-    /// battery, hub and dictation have peeks of their own.
-    var usesSystemHUD: Bool { self != .music && self != .battery && self != .hub && self != .dictation }
+    /// battery, hub, dictation and live activities have peeks of their own.
+    var usesSystemHUD: Bool { self != .music && self != .battery && self != .hub && self != .dictation && self != .live }
 }
 
 struct sneakPeek {
@@ -272,7 +274,7 @@ class BoringViewCoordinator: ObservableObject {
         icon: String = ""
     ) {
         sneakPeekDuration = duration
-        if type != .music && type != .hub && type != .dictation {
+        if type != .music && type != .hub && type != .dictation && type != .live {
             // close()
             if !Defaults[.hudReplacement] {
                 return

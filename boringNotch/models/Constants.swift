@@ -220,6 +220,8 @@ extension Defaults.Keys {
     static let showTowerTab = Key<Bool>("showTowerTab", default: true)
     /// "Tower listening" in the closed notch while the tower dictates (hub D-169).
     static let showTowerDictation = Key<Bool>("showTowerDictation", default: true)
+    /// Live activities from the other devices (transfers, battery, CI) in the closed notch (hub D-170).
+    static let showLiveActivities = Key<Bool>("showLiveActivities", default: true)
     
     // MARK: Clipboard
     static let clipboardHistoryEnabled = Key<Bool>("clipboardHistoryEnabled", default: true)
