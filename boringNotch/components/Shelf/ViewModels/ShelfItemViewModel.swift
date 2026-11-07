@@ -11,6 +11,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import CoreServices
 import ObjectiveC
+import Defaults
 
 @MainActor
 final class ShelfItemViewModel: ObservableObject {
@@ -230,6 +231,24 @@ final class ShelfItemViewModel: ObservableObject {
         }
     }
     
+    /// Share ▸ the online hub devices (picking one sends the selection there), then
+    /// "More…", the System Share Menu (hub D-178).
+    private func hubShareMenuItem(view: NSView) -> NSMenuItem {
+        let hub = HubSendService.shared
+        let share = NSMenuItem(title: "Share", action: nil, keyEquivalent: "")
+        share.identifier = NSMenuItem.hubShareIdentifier
+        let selected = ShelfSelectionModel.shared.selectedItems(in: ShelfStateViewModel.shared.items)
+        let items = selected.isEmpty ? [item] : selected
+        share.submenu = HubSendMenu.make(
+            service: hub,
+            selected: hub.defaultDevice?.id,
+            includeMore: Defaults[.showSystemShareMenu],
+            onDevice: { device in hub.send(hub.items(for: items), to: device) },
+            onMore: { [weak self, weak view] in self?.shareItem(from: view) }
+        )
+        return share
+    }
+
     private func stopSharingAccessingURLs() {
         for url in sharingAccessingURLs {
             url.stopAccessingSecurityScopedResource()
@@ -382,7 +401,7 @@ final class ShelfItemViewModel: ObservableObject {
         }
 
         menu.addItem(NSMenuItem.separator())
-        addMenuItem(title: "Share…")
+        menu.addItem(hubShareMenuItem(view: view))
         
         // Add image processing options for image files grouped under "Image Actions"
         let imageURLs = selectedFileURLs.filter { ImageProcessingService.shared.isImageFile($0) }
@@ -437,7 +456,7 @@ final class ShelfItemViewModel: ObservableObject {
         let actionTarget = MenuActionTarget(item: item, view: view, viewModel: self)
 
         for menuItem in menu.items {
-            if menuItem.isSeparatorItem { continue }
+            if menuItem.isSeparatorItem || menuItem.isHubShare { continue }
             menuItem.target = actionTarget
             menuItem.action = #selector(MenuActionTarget.handle(_:))
 
@@ -538,9 +557,6 @@ final class ShelfItemViewModel: ObservableObject {
             case "Open":
                 let selected = ShelfSelectionModel.shared.selectedItems(in: ShelfStateViewModel.shared.items)
                 for it in selected { ShelfActionService.open(it) }
-
-            case "Share…":
-                viewModel.shareItem(from: view)
 
             case "Rename":
                 let selected = ShelfSelectionModel.shared.selectedItems(in: ShelfStateViewModel.shared.items)
@@ -1172,4 +1188,9 @@ fileprivate extension Sequence {
         }
         return result
     }
+}
+
+private extension NSMenuItem {
+    static let hubShareIdentifier = NSUserInterfaceItemIdentifier("hub.share")
+    var isHubShare: Bool { identifier == Self.hubShareIdentifier }
 }

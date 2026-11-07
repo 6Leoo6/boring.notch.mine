@@ -210,7 +210,12 @@ extension Defaults.Keys {
     static let boringShelf = Key<Bool>("boringShelf", default: true)
     static let openShelfByDefault = Key<Bool>("openShelfByDefault", default: false)
     static let shelfTapToOpen = Key<Bool>("shelfTapToOpen", default: true)
-    static let quickShareProvider = Key<String>("quickShareProvider", default: QuickShareProvider.defaultProvider.id)
+    /// Hub send (D-178): the device the drop zone sends to, the last one used ("" = the first online).
+    static let hubSendDevice = Key<String>("hubSendDevice", default: "")
+    /// Offer "More…" (the System Share Menu) after the hub devices.
+    static let showSystemShareMenu = Key<Bool>("showSystemShareMenu", default: true)
+    /// The old Quick Share provider (AirDrop, …); cleared once at launch (D-178).
+    static let legacyQuickShareProvider = Key<String?>("quickShareProvider", default: nil)
     static let copyOnDrag = Key<Bool>("copyOnDrag", default: false)
     static let autoRemoveShelfItems = Key<Bool>("autoRemoveShelfItems", default: false)
     static let expandedDragDetection = Key<Bool>("expandedDragDetection", default: true)

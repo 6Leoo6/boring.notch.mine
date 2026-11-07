@@ -120,6 +120,10 @@ mediaremote-adapter/              # Perl script for media remote bridging
 - Protection: `ClipboardEntry.protectionOverride` (nil = auto) + `ClipboardProtection` (password-manager bundle IDs, secret regexes), with auto-detection controlled by `Defaults[.clipboardAutoProtectSecrets]`. Protected entries are listed without content.
 - To enable a Bool key for one launch without writing the sandboxed prefs: `open -a boringNotch.app --args -<key> '<true/>'` (a bare `YES` arrives as a String and Defaults ignores it).
 
+### Hub send (hub D-178)
+- The shelf's AirDrop / Quick Share surfaces send to hub devices instead: `HubSendService` (in `components/Shelf/Services/QuickShareService.swift`) lists the online phone/tower from the helper's `peer.list` (via `HubHelperClient`, token from `~/.config/boringnotch/hub/<label>.json`), the drop zone (`FileShareView`) and the item's Share submenu send there, "More…" is the old `NSSharingServicePicker`. Settings: Shelf > Hub devices.
+- Files go through the helper's `transfer.send {device, path}`; the helper's sandbox only reads `~/.config/boringnotch/`, so files are staged in `~/.config/boringnotch/outbox/<uuid>/` first (APFS clone, a copy across volumes, a zip for folders) and removed when done. Progress polls `transfer.sends` every 500 ms (`Hub/HubSendCore.swift`, Foundation only; tests: `Hub/tests/send-tests.sh`).
+
 <!-- Example:
 - Disabled the volume HUD (changed `showVolumeHUD` default to false in Constants.swift)
 - Increased default notch open animation speed

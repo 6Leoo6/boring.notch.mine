@@ -946,20 +946,9 @@ struct About: View {
 struct Shelf: View {
     
     @Default(.shelfTapToOpen) var shelfTapToOpen: Bool
-    @Default(.quickShareProvider) var quickShareProvider
     @Default(.expandedDragDetection) var expandedDragDetection: Bool
     @Default(.commandHoverRoute) var commandHoverRoute: ModifierRoute
     @Default(.optionHoverRoute) var optionHoverRoute: ModifierRoute
-    @StateObject private var quickShareService = QuickShareService.shared
-
-    private var selectedProvider: QuickShareProvider? {
-        quickShareService.availableProviders.first(where: { $0.id == quickShareProvider })
-    }
-    
-    init() {
-        Task { await QuickShareService.shared.discoverAvailableProviders() }
-    }
-    
     var body: some View {
         Form {
             Section {
@@ -1022,66 +1011,75 @@ struct Shelf: View {
                     .foregroundColor(.secondary)
             }
             
-            Section {
-                Picker("Quick Share Service", selection: $quickShareProvider) {
-                    ForEach(quickShareService.availableProviders, id: \.id) { provider in
-                        HStack {
-                            Group {
-                                if let imgData = provider.imageData, let nsImg = NSImage(data: imgData) {
-                                    Image(nsImage: nsImg)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                } else {
-                                    Image(systemName: "square.and.arrow.up")
-                                }
-                            }
-                            .frame(width: 16, height: 16)
-                            .foregroundColor(.accentColor)
-                            Text(provider.id)
-                        }
-                        .tag(provider.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                
-                if let selectedProvider = selectedProvider {
-                    HStack {
-                        Group {
-                            if let imgData = selectedProvider.imageData, let nsImg = NSImage(data: imgData) {
-                                Image(nsImage: nsImg)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                            } else {
-                                Image(systemName: "square.and.arrow.up")
-                            }
-                        }
-                        .frame(width: 16, height: 16)
-                        .foregroundColor(.accentColor)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Currently selected: \(selectedProvider.id)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text("Files dropped on the shelf will be shared via this service")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                // Providers are always enabled; user can pick default service above.
-                
-            } header: {
-                HStack {
-                    Text("Quick Share")
-                }
-            } footer: {
-                Text("Choose which service to use when sharing files from the shelf. Click the shelf button to select files, or drag files onto it to share immediately.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+            HubDevicesSection()
         }
         .accentColor(.effectiveAccent)
         .navigationTitle("Shelf")
+    }
+}
+
+/// Hub send (hub D-178): the devices the shelf's share surfaces send to, which one is the
+/// default, and whether "More…" (the System Share Menu) is offered. Replaces the old
+/// Quick Share provider picker.
+struct HubDevicesSection: View {
+    @ObservedObject private var hub = HubSendService.shared
+    @Default(.hubSendDevice) private var hubSendDevice: String
+
+    private var known: [HubSendDevice] { HubSendTargets.known(hub.devices) }
+
+    var body: some View {
+        Section {
+            if known.isEmpty {
+                Text(hub.problem ?? "No hub devices yet")
+                    .foregroundColor(.secondary)
+            }
+            ForEach(known) { device in
+                HStack(spacing: 8) {
+                    Image(device.iconName)
+                        .renderingMode(.template)
+                        .resizable()
+                        .frame(width: 16, height: 16)
+                        .foregroundColor(.accentColor)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(hub.label(for: device))
+                        if hub.label(for: device) != device.name {
+                            Text(device.name)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Circle()
+                        .fill(device.online ? Color.green : Color.secondary.opacity(0.5))
+                        .frame(width: 7, height: 7)
+                    Text(device.online ? "Online" : "Offline")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            if !hub.targets.isEmpty {
+                Picker("Default device", selection: Binding(
+                    get: { hub.defaultDevice?.id ?? "" },
+                    set: { hubSendDevice = $0 }
+                )) {
+                    ForEach(hub.targets) { device in
+                        Text(hub.label(for: device)).tag(device.id)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+            Defaults.Toggle(key: .showSystemShareMenu) {
+                Text("Show \u{201C}More\u{2026}\u{201D} (the System Share Menu)")
+            }
+        } header: {
+            Text("Hub devices")
+        } footer: {
+            Text("Drop files, text or links on the shelf\u{2019}s drop zone to send them to the default device; click the zone or use Share on an item to pick another. Offline devices are hidden there. The default is the device you sent to last.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .onAppear { hub.beginRefreshing() }
+        .onDisappear { hub.endRefreshing() }
     }
 }
 
