@@ -351,6 +351,8 @@ struct LiveCountBadge: View {
 /// progress line when it has one, the action as a small chip and the count of the others.
 struct LivePeekView: View {
     @ObservedObject var center = LiveActivityCenter.shared
+    /// A tap on an activity without an action opens the notch, as a tap on the island does.
+    var onOpen: () -> Void = {}
 
     private static let maxTextColumn: CGFloat = 190
     private static let iconSide: CGFloat = 18
@@ -414,7 +416,9 @@ struct LivePeekView: View {
             .padding(.vertical, 1)
             .fixedSize()
             .contentShape(Rectangle())
-            .onTapGesture { center.performPrimary() }
+            .onTapGesture {
+                if activity.actions.isEmpty { onOpen() } else { center.performPrimary() }
+            }
             .animation(.smooth, value: activity.id)
         }
     }

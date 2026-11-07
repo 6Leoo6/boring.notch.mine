@@ -30,6 +30,11 @@ extension SneakContentType {
     /// Drawn by the system-event HUD (inline or the indicator below the island). Music,
     /// battery, hub, dictation and live activities have peeks of their own.
     var usesSystemHUD: Bool { self != .music && self != .battery && self != .hub && self != .dictation && self != .live }
+
+    /// Hovering the closed island waits while this peek is up (upstream: a HUD or a track
+    /// change is gone in 1.5 s). The hub's peeks stay up as long as their producer reports, a
+    /// file arriving for minutes, so they must never hold the notch shut.
+    var blocksHoverOpen: Bool { self != .hub && self != .dictation && self != .live }
 }
 
 struct sneakPeek {
