@@ -623,7 +623,7 @@ struct ContentView: View {
                           }
                           else if coordinator.sneakPeek.type == .live && vm.notchState == .closed && !vm.hideOnClosed {
                               // Another device's live activity (hub D-170): same slot and entrance.
-                              LivePeekView()
+                              LivePeekView(onOpen: { doOpen() })
                                   .frame(
                                       minWidth: max(closedStripWidth, vm.closedNotchSize.width),
                                       alignment: .center
@@ -1068,6 +1068,11 @@ struct ContentView: View {
         }
     }
 
+    /// A peek that keeps a hover from opening the island (`SneakContentType.blocksHoverOpen`).
+    private var peekBlocksHoverOpen: Bool {
+        coordinator.sneakPeek.show && coordinator.sneakPeek.type.blocksHoverOpen
+    }
+
     private func handleHover(_ hovering: Bool) {
         if coordinator.firstLaunch { return }
         hoverTask?.cancel()
@@ -1078,7 +1083,7 @@ struct ContentView: View {
             }
 
             guard vm.notchState == .closed,
-                  !coordinator.sneakPeek.show,
+                  !peekBlocksHoverOpen,
                   Defaults[.openNotchOnHover] else { return }
             
             hoverTask = Task {
@@ -1088,7 +1093,7 @@ struct ContentView: View {
                 await MainActor.run {
                     guard self.vm.notchState == .closed,
                           self.isHovering,
-                          !self.coordinator.sneakPeek.show else { return }
+                          !self.peekBlocksHoverOpen else { return }
                     
                     self.doOpen()
                 }
