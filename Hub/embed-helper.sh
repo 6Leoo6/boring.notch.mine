@@ -47,7 +47,17 @@ if [[ -z $src ]]; then
   exit 0
 fi
 
-version=$("$src" version 2>/dev/null | awk '{print $NF; exit}')
+# The binary must run: a copy that came through the hub inbox (or a browser) carries
+# com.apple.quarantine, and macOS refuses to exec a quarantined ad-hoc binary ("operation not
+# permitted"). Without this check the version line below failed under set -e with no message.
+if ! out=$("$src" version 2>/dev/null); then
+  echo "error: hub helper at $src does not run: $("$src" version 2>&1 | tail -1)"
+  if xattr "$src" 2>/dev/null | grep -q com.apple.quarantine; then
+    echo "error: it is quarantined (it came through a download or the hub inbox). If it is the binary you meant to install: xattr -d com.apple.quarantine \"$src\""
+  fi
+  exit 1
+fi
+version=$(print -r -- "$out" | awk 'NF {v=$NF} END {print v}')
 bundle_version=${version#v}
 [[ $bundle_version =~ '^[0-9]+(\.[0-9]+)*$' ]] || bundle_version=0   # dev builds: 0
 mkdir -p "$bundle/Contents/MacOS" "${agent:h}"
