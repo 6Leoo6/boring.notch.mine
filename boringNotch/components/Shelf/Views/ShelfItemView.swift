@@ -260,6 +260,11 @@ struct ShelfItemView: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: isLaunching)
+        // Hub send (D-178): a ring while this item is on its way to another device
+        .overlay {
+            HubSendTileRing(itemID: item.id, tileSize: tileSize)
+                .allowsHitTesting(false)
+        }
         // The press says "click received"; this says "it is opening". Without it the only
         // signal is the scrim fading in, which reads as the tile going quiet rather than
         // committing. Deliberately small — 3.5% on a 68pt tile is ~1pt per side, so it

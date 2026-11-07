@@ -56,7 +56,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow?
     let vm: BoringViewModel = .init()
     @ObservedObject var coordinator = BoringViewCoordinator.shared
-    var quickShareService = QuickShareService.shared
+    var hubSendService = HubSendService.shared
     var whatsNewWindow: NSWindow?
     var timer: Timer?
     var closeNotchTask: Task<Void, Never>?
@@ -345,6 +345,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         HubHelper.registerIfEmbedded()
+        // The old Quick Share provider preference (AirDrop, …) has no hub equivalent (D-178).
+        Defaults[.legacyQuickShareProvider] = nil
 
         NotificationCenter.default.addObserver(
             self,

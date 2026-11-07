@@ -48,7 +48,6 @@
 		118D1FD12E98FF5F00A2FF63 /* SharingStateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118D1FD02E98FF5F00A2FF63 /* SharingStateManager.swift */; };
 		118EBE252E92DCCB00D54B5A /* AssociatedObject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118EBE242E92DCCB00D54B5A /* AssociatedObject.swift */; };
 		118EBE272E92DE8400D54B5A /* NSMenu+AssociatedObject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118EBE262E92DE7400D54B5A /* NSMenu+AssociatedObject.swift */; };
-		118EBE292E946B3F00D54B5A /* ShareServiceFinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118EBE282E946B3F00D54B5A /* ShareServiceFinder.swift */; };
 		118EBE2D2E97165600D54B5A /* Bookmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118EBE2C2E97165600D54B5A /* Bookmark.swift */; };
 		118EBE312E9717DB00D54B5A /* URL+SecurityScoped.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118EBE302E9717DB00D54B5A /* URL+SecurityScoped.swift */; };
 		118EBE3B2E9720C500D54B5A /* ShelfStateViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118EBE3A2E9720C500D54B5A /* ShelfStateViewModel.swift */; };
@@ -231,7 +230,6 @@
 		118D1FD02E98FF5F00A2FF63 /* SharingStateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingStateManager.swift; sourceTree = "<group>"; };
 		118EBE242E92DCCB00D54B5A /* AssociatedObject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssociatedObject.swift; sourceTree = "<group>"; };
 		118EBE262E92DE7400D54B5A /* NSMenu+AssociatedObject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSMenu+AssociatedObject.swift"; sourceTree = "<group>"; };
-		118EBE282E946B3F00D54B5A /* ShareServiceFinder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareServiceFinder.swift; sourceTree = "<group>"; };
 		118EBE2C2E97165600D54B5A /* Bookmark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bookmark.swift; sourceTree = "<group>"; };
 		118EBE302E9717DB00D54B5A /* URL+SecurityScoped.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "URL+SecurityScoped.swift"; sourceTree = "<group>"; };
 		118EBE3A2E9720C500D54B5A /* ShelfStateViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfStateViewModel.swift; sourceTree = "<group>"; };
@@ -399,7 +397,6 @@
 			isa = PBXGroup;
 			children = (
 				1194E87B2EA19E09009C82D6 /* ImageProcessingService.swift */,
-				118EBE282E946B3F00D54B5A /* ShareServiceFinder.swift */,
 				1100292D2E86940F00035A57 /* QuickShareService.swift */,
 				110029262E84FD4C00035A57 /* TemporaryFileStorageService.swift */,
 				1113ABCF2E80E6BB00EC13B2 /* ThumbnailService.swift */,
@@ -1019,7 +1016,6 @@
 				1163988F2DF5CC870052E6AF /* CalendarModel.swift in Sources */,
 				2C7194D53050A9D3002AEAD3 /* ClipboardPreviewPanel.swift in Sources */,
 				1153BD9A2D98824300979FB0 /* SpotifyController.swift in Sources */,
-				118EBE292E946B3F00D54B5A /* ShareServiceFinder.swift in Sources */,
 				B19424092CD0FF01003E5DC2 /* LottieAnimationView.swift in Sources */,
 				B1F747F92EC7E94000F841DB /* LottieView.swift in Sources */,
 				B1C974342C642B6D0000E707 /* MarqueeTextView.swift in Sources */,
