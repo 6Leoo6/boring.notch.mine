@@ -236,8 +236,11 @@ private final class BridgeConnection: @unchecked Sendable {
             headers[name] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
 
-        guard requestLine.count >= 2, requestLine[0] == "POST", requestLine[1] == "/rpc" else {
-            respond(status: 404, json: Self.errorBody("Only POST /rpc is served"))
+        let method = requestLine.count >= 2 ? String(requestLine[0]) : ""
+        let target = requestLine.count >= 2 ? String(requestLine[1]) : ""
+        let isBlob = target.hasPrefix("/blob/") && (method == "PUT" || method == "GET")
+        guard (method == "POST" && target == "/rpc") || isBlob else {
+            respond(status: 404, json: Self.errorBody("Only POST /rpc and PUT/GET /blob/{sha256} are served"))
             return true
         }
         // A browser page can reach loopback; it can never omit Origin, so refusing any
@@ -248,6 +251,10 @@ private final class BridgeConnection: @unchecked Sendable {
         }
         guard let auth = headers["authorization"], Self.constantTimeEquals(auth, "Bearer \(token)") else {
             respond(status: 401, json: Self.errorBody("Bad or missing token"))
+            return true
+        }
+        if isBlob {
+            handleBlob(method: method, target: target, headers: headers, bodyStart: headerEnd.upperBound)
             return true
         }
         guard let lengthString = headers["content-length"], let length = Int(lengthString), length >= 0 else {
@@ -274,6 +281,8 @@ private final class BridgeConnection: @unchecked Sendable {
         let reason: String
         switch status {
         case 200: reason = "OK"
+        case 206: reason = "Partial Content"
+        case 416: reason = "Range Not Satisfiable"
         case 401: reason = "Unauthorized"
         case 403: reason = "Forbidden"
         case 404: reason = "Not Found"
@@ -294,8 +303,181 @@ private final class BridgeConnection: @unchecked Sendable {
         selfRetain = nil
     }
 
-    private static func errorBody(_ message: String) -> Data {
-        (try? JSONSerialization.data(withJSONObject: ["ok": false, "error": message])) ?? Data()
+    private static func errorBody(_ message: String, code: String? = nil) -> Data {
+        var out: [String: Any] = ["ok": false, "error": message]
+        if let code { out["code"] = code }
+        return (try? JSONSerialization.data(withJSONObject: out)) ?? Data()
+    }
+
+    private static func resultBody(_ result: [String: Any]) -> Data {
+        (try? JSONSerialization.data(withJSONObject: ["ok": true, "result": result], options: [.sortedKeys])) ?? Data()
+    }
+
+    // MARK: - /blob (hub D-176)
+
+    /// `PUT /blob/{sha256}` streams the body to disk and `GET /blob/{sha256}` streams a file
+    /// back, 1 MiB at a time, so neither has the /rpc body cap nor holds a file in memory.
+    /// Same loopback, Origin and token rules as /rpc (checked before this is reached).
+    private func handleBlob(method: String, target: String, headers: [String: String], bodyStart: Data.Index) {
+        guard let sha = HubBlobStore.normalized(String(target.dropFirst("/blob/".count))) else {
+            return respond(status: method == "GET" ? 404 : 200,
+                           json: Self.errorBody("The path must be /blob/ and a sha256 (64 hex characters)", code: method == "GET" ? "not_found" : "invalid_params"))
+        }
+        if method == "GET" {
+            serveBlob(sha, range: headers["range"])
+        } else {
+            receiveBlob(sha, headers: headers, bodyStart: bodyStart)
+        }
+    }
+
+    private func receiveBlob(_ sha: String, headers: [String: String], bodyStart: Data.Index) {
+        guard let lengthString = headers["content-length"], let length = Int64(lengthString), length >= 0 else {
+            return respond(status: 411, json: Self.errorBody("Content-Length required"))
+        }
+        guard let sizeString = headers["hub-blob-size"], let size = Int64(sizeString) else {
+            return respond(status: 200, json: Self.errorBody("Hub-Blob-Size (the whole blob's size) is required", code: "invalid_params"))
+        }
+        var offset: Int64 = 0
+        if let raw = headers["hub-blob-offset"] {
+            guard let value = Int64(raw) else {
+                return respond(status: 200, json: Self.errorBody("Hub-Blob-Offset must be a number", code: "invalid_params"))
+            }
+            offset = value
+        }
+        let upload: HubBlobStore.Upload
+        do {
+            switch try HubBlobStore.shared.begin(sha: sha, size: size, offset: offset, length: length) {
+            case .answer(let progress):
+                return respond(status: 200, json: Self.resultBody(progress.json))
+            case .upload(let started):
+                upload = started
+            }
+        } catch let failure as HubBlobStore.Failure {
+            return respond(status: 200, json: Self.errorBody(failure.message, code: failure.code))
+        } catch {
+            return respond(status: 200, json: Self.errorBody(error.localizedDescription, code: "unavailable"))
+        }
+
+        // Body bytes that came in with the headers
+        let leftover = buffer[bodyStart...].prefix(Int(min(length, Int64(Int.max))))
+        buffer = Data()
+        var remaining = length
+        if !leftover.isEmpty {
+            do { try upload.write(Data(leftover)) } catch { return failUpload(upload, error) }
+            remaining -= Int64(leftover.count)
+        }
+        receiveBody(upload, remaining: remaining)
+    }
+
+    private func receiveBody(_ upload: HubBlobStore.Upload, remaining: Int64) {
+        guard remaining > 0 else { return finishUpload(upload) }
+        let maximum = Int(min(remaining, Int64(1 << 20)))
+        connection.receive(minimumIncompleteLength: 1, maximumLength: maximum) { [weak self] data, _, isComplete, error in
+            guard let self else { return upload.abort() }
+            var left = remaining
+            if let data, !data.isEmpty {
+                do { try upload.write(data) } catch { return self.failUpload(upload, error) }
+                left -= Int64(data.count)
+            }
+            if left <= 0 { return self.finishUpload(upload) }
+            if error != nil || isComplete {
+                upload.abort()
+                return self.close()
+            }
+            self.receiveBody(upload, remaining: left)
+        }
+    }
+
+    private func finishUpload(_ upload: HubBlobStore.Upload) {
+        // Hashing a resumed upload reads the whole file: off the shared connection queue.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let reply: Data
+            do {
+                reply = Self.resultBody(try upload.finish().json)
+            } catch let failure as HubBlobStore.Failure {
+                reply = Self.errorBody(failure.message, code: failure.code)
+            } catch {
+                reply = Self.errorBody(error.localizedDescription, code: "unavailable")
+            }
+            self.queue.async { self.respond(status: 200, json: reply) }
+        }
+    }
+
+    private func failUpload(_ upload: HubBlobStore.Upload, _ error: Error) {
+        upload.abort()
+        let failure = error as? HubBlobStore.Failure ?? .io(error.localizedDescription)
+        respond(status: 200, json: Self.errorBody(failure.message, code: failure.code))
+    }
+
+    private func serveBlob(_ sha: String, range: String?) {
+        guard let (url, size) = HubBlobStore.shared.resolve(sha) else {
+            return respond(status: 404, json: Self.errorBody("No blob \(sha) here", code: "not_found"))
+        }
+        var start: Int64 = 0
+        var end: Int64 = size - 1
+        var partial = false
+        if let range {
+            guard let parsed = Self.parseRange(range, size: size) else {
+                return respond(status: 416, json: Self.errorBody("Range \(range) does not fit a blob of \(size) bytes; use one bytes=a-b or bytes=a-", code: "invalid_params"))
+            }
+            (start, end) = parsed
+            partial = true
+        }
+        let accessing = url.startAccessingSecurityScopedResource()
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            if accessing { url.stopAccessingSecurityScopedResource() }
+            return respond(status: 404, json: Self.errorBody("Blob \(sha) can't be read any more", code: "not_found"))
+        }
+        let length = size == 0 ? 0 : end - start + 1
+        do { try handle.seek(toOffset: UInt64(start)) } catch {
+            try? handle.close()
+            if accessing { url.stopAccessingSecurityScopedResource() }
+            return respond(status: 404, json: Self.errorBody("Blob \(sha) can't be read any more", code: "not_found"))
+        }
+        var head = "HTTP/1.1 \(partial ? "206 Partial Content" : "200 OK")\r\nContent-Type: application/octet-stream\r\nContent-Length: \(length)\r\nHub-Blob-Size: \(size)\r\nAccept-Ranges: bytes\r\n"
+        if partial { head += "Content-Range: bytes \(start)-\(end)/\(size)\r\n" }
+        head += "Connection: close\r\n\r\n"
+        let finish = { [weak self] in
+            try? handle.close()
+            if accessing { url.stopAccessingSecurityScopedResource() }
+            self?.close()
+        }
+        connection.send(content: Data(head.utf8), completion: .contentProcessed { [weak self] error in
+            guard let self, error == nil else { return finish() }
+            self.pump(handle, remaining: length, finish: finish)
+        })
+    }
+
+    /// Sends the next chunk once the previous one is handed to the network: one chunk in
+    /// memory at a time however big the file.
+    private func pump(_ handle: FileHandle, remaining: Int64, finish: @escaping () -> Void) {
+        guard remaining > 0 else { return finish() }
+        let data: Data? = autoreleasepool {
+            try? handle.read(upToCount: Int(min(remaining, Int64(HubBlobStore.ioChunk))))
+        }
+        guard let data, !data.isEmpty else { return finish() }
+        connection.send(content: data, completion: .contentProcessed { [weak self] error in
+            guard let self, error == nil else { return finish() }
+            self.pump(handle, remaining: remaining - Int64(data.count), finish: finish)
+        })
+    }
+
+    /// One range, `bytes=a-b`, `bytes=a-` or `bytes=-n`, clamped to the blob.
+    private static func parseRange(_ header: String, size: Int64) -> (Int64, Int64)? {
+        let value = header.trimmingCharacters(in: .whitespaces)
+        guard value.lowercased().hasPrefix("bytes="), size > 0 else { return nil }
+        let spec = value.dropFirst(6)
+        guard !spec.contains(","), let dash = spec.firstIndex(of: "-") else { return nil }
+        let first = spec[..<dash].trimmingCharacters(in: .whitespaces)
+        let last = spec[spec.index(after: dash)...].trimmingCharacters(in: .whitespaces)
+        if first.isEmpty {
+            guard let count = Int64(last), count > 0 else { return nil }
+            return (max(0, size - count), size - 1)
+        }
+        guard let start = Int64(first), start >= 0, start < size else { return nil }
+        if last.isEmpty { return (start, size - 1) }
+        guard let end = Int64(last), end >= start else { return nil }
+        return (start, min(end, size - 1))
     }
 
     private static func constantTimeEquals(_ a: String, _ b: String) -> Bool {

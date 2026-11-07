@@ -9,6 +9,7 @@
 //  on every start; there is nothing to configure.
 //
 
+import CryptoKit
 import Foundation
 
 // MARK: - JSON-RPC plumbing
@@ -93,6 +94,106 @@ struct Bridge {
         }
         return reply["result"] ?? NSNull()
     }
+
+    /// Whether this boring.notch serves the streaming /blob route (hub D-176). An older app
+    /// says nothing and gets base64 within 64 MiB, as before.
+    func hasBlob() async -> Bool {
+        let status = try? await call("status") as? JSON
+        return status?["blob"] as? Bool == true
+    }
+
+    private func blobURL(_ sha: String) throws -> URL {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/blob/\(sha)") else { throw ToolError("Bad bridge URL") }
+        return url
+    }
+
+    private func envelope(_ data: Data) throws -> JSON {
+        guard let reply = try? JSONSerialization.jsonObject(with: data) as? JSON else {
+            throw ToolError("boring.notch sent an unreadable reply")
+        }
+        guard reply["ok"] as? Bool == true, let result = reply["result"] as? JSON else {
+            throw ToolError(reply["error"] as? String ?? "boring.notch reported an unknown error")
+        }
+        return result
+    }
+
+    private func putRequest(_ sha: String, size: Int64, offset: Int64, length: Int64) throws -> URLRequest {
+        var request = URLRequest(url: try blobURL(sha), timeoutInterval: 120)
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue(String(length), forHTTPHeaderField: "Content-Length")
+        request.setValue(String(size), forHTTPHeaderField: "Hub-Blob-Size")
+        request.setValue(String(offset), forHTTPHeaderField: "Hub-Blob-Offset")
+        return request
+    }
+
+    /// Streams a file of any size to PUT /blob/{sha256}, resuming what the app already has.
+    /// Returns the sha256 once the app holds the complete blob.
+    func uploadBlob(_ file: URL) async throws -> String {
+        let sha = try sha256(of: file)
+        let size = try fileSize(file)
+        for _ in 0..<3 {
+            let (probe, _) = try await URLSession.shared.data(for: try putRequest(sha, size: size, offset: 0, length: 0))
+            let state = try envelope(probe)
+            if state["complete"] as? Bool == true { return sha }
+            let offset = (state["received_bytes"] as? NSNumber)?.int64Value ?? 0
+            guard let stream = InputStream(url: file) else { throw ToolError("Could not read \(file.path)") }
+            stream.setProperty(NSNumber(value: offset), forKey: .fileCurrentOffsetKey)
+            var request = try putRequest(sha, size: size, offset: offset, length: size - offset)
+            request.httpBodyStream = stream
+            do {
+                let (data, _) = try await URLSession.shared.data(for: request)
+                let result = try envelope(data)
+                if result["complete"] as? Bool == true { return sha }
+            } catch let error as ToolError {
+                throw error
+            } catch {
+                log("blob upload interrupted, resuming: \(error.localizedDescription)")
+            }
+        }
+        throw ToolError("Could not upload \(file.lastPathComponent) to boring.notch")
+    }
+
+    /// GET /blob/{sha256} straight to a temporary file, checked against the hash.
+    func downloadBlob(_ sha: String) async throws -> URL {
+        var request = URLRequest(url: try blobURL(sha), timeoutInterval: 120)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (temp, response) = try await URLSession.shared.download(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            let body = (try? Data(contentsOf: temp)) ?? Data()
+            try? FileManager.default.removeItem(at: temp)
+            _ = try envelope(body)
+            throw ToolError("boring.notch could not send the file")
+        }
+        guard try sha256(of: temp) == sha else {
+            try? FileManager.default.removeItem(at: temp)
+            throw ToolError("The file from boring.notch arrived damaged; try again")
+        }
+        return temp
+    }
+}
+
+func fileSize(_ url: URL) throws -> Int64 {
+    guard let size = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value else {
+        throw ToolError("Could not read the size of \(url.path)")
+    }
+    return size
+}
+
+func sha256(of url: URL) throws -> String {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    var hasher = SHA256()
+    while true {
+        let more: Bool = try autoreleasepool {
+            guard let data = try handle.read(upToCount: 4 << 20), !data.isEmpty else { return false }
+            hasher.update(data: data)
+            return true
+        }
+        if !more { break }
+    }
+    return hasher.finalize().map { String(format: "%02x", $0) }.joined()
 }
 
 // MARK: - Paths
@@ -204,12 +305,24 @@ let tools: [Tool] = [
         readOnly: false
     ) { args in
         let id = try requiredString(args, "id")
-        guard let result = try await Bridge.locate().call("shelf.get", ["id": id]) as? JSON else {
+        let bridge = try Bridge.locate()
+        let useBlob = await bridge.hasBlob()
+        guard let result = try await bridge.call("shelf.get", useBlob ? ["id": id, "blob": true] : ["id": id]) as? JSON else {
             throw ToolError("Unexpected reply for shelf item")
         }
         let overwrite = args["overwrite"] as? Bool ?? false
         let destination = args["destination"] as? String
         switch result["kind"] as? String {
+        case "file" where result["blob"] is String:
+            let name = result["file_name"] as? String ?? "file"
+            let target = try resolveDestination(destination, fileName: name)
+            if FileManager.default.fileExists(atPath: target.path) && !overwrite {
+                throw ToolError("\(target.path) already exists. Pass overwrite: true to replace it.")
+            }
+            let temp = try await bridge.downloadBlob(result["blob"] as? String ?? "")
+            try? FileManager.default.removeItem(at: target)
+            try FileManager.default.moveItem(at: temp, to: target)
+            return textContent(["kind": "file", "saved_to": target.path, "byte_size": try fileSize(target)])
         case "file":
             guard let encoded = result["data_base64"] as? String, let data = Data(base64Encoded: encoded) else {
                 throw ToolError("File payload was missing")
@@ -234,7 +347,7 @@ let tools: [Tool] = [
 
     Tool(
         name: "shelf_put",
-        description: "Add something to the boring.notch shelf, the tray in the notch where the user picks up files. Use it to deliver a finished file when the user has not asked for a specific location. Give exactly one of: `path` (a file, or a folder which is zipped; copied onto the shelf, max 64 MB), `text`, or `url`. Returns the new item's id. Adding something already on the shelf returns the existing id.",
+        description: "Add something to the boring.notch shelf, the tray in the notch where the user picks up files. Use it to deliver a finished file when the user has not asked for a specific location. Give exactly one of: `path` (a file, or a folder which is zipped; copied onto the shelf, any size), `text`, or `url`. Returns the new item's id. Adding something already on the shelf returns the existing id.",
         schema: object([
             "path": ["type": "string", "description": "File or folder to copy onto the shelf. ~ and relative paths are accepted."],
             "text": ["type": "string", "description": "A text snippet to put on the shelf"],
@@ -255,7 +368,16 @@ let tools: [Tool] = [
             }
             defer { if let zipped { try? FileManager.default.removeItem(at: zipped.deletingLastPathComponent()) } }
             payload["file_name"] = url.lastPathComponent
-            payload["data_base64"] = try readForUpload(url).base64EncodedString()
+            let bridge = try Bridge.locate()
+            if await bridge.hasBlob() {
+                guard (try url.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true else {
+                    throw ToolError("\(url.path) is not a regular file")
+                }
+                payload["blob"] = try await bridge.uploadBlob(url)
+            } else {
+                payload["data_base64"] = try readForUpload(url).base64EncodedString()
+            }
+            return textContent(try await bridge.call("shelf.put", payload))
         } else if let text = args["text"] as? String {
             payload["text"] = text
         } else if let link = args["url"] as? String {

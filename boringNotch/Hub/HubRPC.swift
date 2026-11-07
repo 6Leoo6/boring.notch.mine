@@ -76,11 +76,17 @@ public enum HubRPC {
         case shelfList = "shelf.list"
         case shelfPut = "shelf.put"
         case shelfRemove = "shelf.remove"
+        case speakerStart = "speaker.start"
+        case speakerStatus = "speaker.status"
+        case speakerStop = "speaker.stop"
         case status = "status"
         case transferBegin = "transfer.begin"
         case transferCancel = "transfer.cancel"
         case transferChunk = "transfer.chunk"
         case transferCommit = "transfer.commit"
+        case transferRead = "transfer.read"
+        case transferSend = "transfer.send"
+        case transferSends = "transfer.sends"
         case transferStatus = "transfer.status"
         case urlOpen = "url.open"
         case wifiFollow = "wifi.follow"
@@ -158,11 +164,17 @@ public enum HubRPC {
             case .shelfList: return "shelf"
             case .shelfPut: return "shelf"
             case .shelfRemove: return "shelf"
+            case .speakerStart: return "speaker"
+            case .speakerStatus: return "speaker"
+            case .speakerStop: return "speaker"
             case .status: return "core"
             case .transferBegin: return "transfer"
             case .transferCancel: return "transfer"
             case .transferChunk: return "transfer"
             case .transferCommit: return "transfer"
+            case .transferRead: return "transfer"
+            case .transferSend: return "transfer"
+            case .transferSends: return "transfer"
             case .transferStatus: return "transfer"
             case .urlOpen: return "url"
             case .wifiFollow: return "wifi"
@@ -226,6 +238,12 @@ public enum HubRPC {
         case rs8m = "rs8m"
         case ldpc = "ldpc"
         case disable = "disable"
+    }
+
+    /// media (default): played as media (Android USAGE_MEDIA, takes audio focus, pauses for calls). call: played as a voice call stream (USAGE_VOICE_COMMUNICATION) so the device's echo cancelling hears it when its mic is also lent with source call.
+    public enum AudioRouteParamsPurpose: String, Codable, CaseIterable, Hashable, Sendable {
+        case media = "media"
+        case call = "call"
     }
 
     public enum AudioSessionKind: String, Codable, CaseIterable, Hashable, Sendable {
@@ -499,6 +517,29 @@ public enum HubRPC {
         case link = "link"
     }
 
+    /// standby: the sink is there but idle and nothing runs on the device; playing into it starts a session. live: the device's receiver is bound and the sink sends to it.
+    public enum SpeakerSessionState: String, Codable, CaseIterable, Hashable, Sendable {
+        case standby = "standby"
+        case starting = "starting"
+        case needsUser = "needs_user"
+        case live = "live"
+        case stopped = "stopped"
+        case failed = "failed"
+    }
+
+    /// Default rs8m.
+    public enum SpeakerStartParamsFec: String, Codable, CaseIterable, Hashable, Sendable {
+        case rs8m = "rs8m"
+        case ldpc = "ldpc"
+        case disable = "disable"
+    }
+
+    /// As AudioRouteParams.purpose (default media).
+    public enum SpeakerStartParamsPurpose: String, Codable, CaseIterable, Hashable, Sendable {
+        case media = "media"
+        case call = "call"
+    }
+
     public enum StatusResultRole: String, Codable, CaseIterable, Hashable, Sendable {
         case node = "node"
         case hub = "hub"
@@ -509,6 +550,21 @@ public enum HubRPC {
         case expired = "expired"
         case checksum = "checksum"
         case delivery = "delivery"
+    }
+
+    /// How the last chunk went.
+    public enum TransferSendInfoPath: String, Codable, CaseIterable, Hashable, Sendable {
+        case direct = "direct"
+        case hub = "hub"
+    }
+
+    public enum TransferSendState: String, Codable, CaseIterable, Hashable, Sendable {
+        case hashing = "hashing"
+        case sending = "sending"
+        case retrying = "retrying"
+        case completed = "completed"
+        case failed = "failed"
+        case cancelled = "cancelled"
     }
 
     public enum TransferState: String, Codable, CaseIterable, Hashable, Sendable {
@@ -766,6 +822,25 @@ public enum HubRPC {
         }
     }
 
+    /// UDP ports of a roc receiver without the host (see AudioEndpoint).
+    public struct AudioPorts: Codable, Hashable, Sendable {
+        public var controlPort: Int64?
+        public var repairPort: Int64?
+        public var sourcePort: Int64?
+
+        public init(controlPort: Int64? = nil, repairPort: Int64? = nil, sourcePort: Int64? = nil) {
+            self.controlPort = controlPort
+            self.repairPort = repairPort
+            self.sourcePort = sourcePort
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case controlPort = "control_port"
+            case repairPort = "repair_port"
+            case sourcePort = "source_port"
+        }
+    }
+
     public struct AudioRenewParams: Codable, Hashable, Sendable {
         /// New lease length; absent keeps the session's.
         public var leaseMs: Int64?
@@ -793,15 +868,21 @@ public enum HubRPC {
         public var link: AudioLink?
         /// 0 or absent: no cap (speaker sessions can run all evening).
         public var maxSeconds: Int64?
+        /// Ports the caller would like the receiver to bind (so a sender set up beforehand, e.g. the tower's idle "Phone (hub)" sink, needs no reload). The receiver binds them when free, else picks its own; local always names what it bound.
+        public var ports: AudioPorts?
+        /// media (default): played as media (Android USAGE_MEDIA, takes audio focus, pauses for calls). call: played as a voice call stream (USAGE_VOICE_COMMUNICATION) so the device's echo cancelling hears it when its mic is also lent with source call.
+        public var purpose: AudioRouteParamsPurpose?
         public var sessionId: String
 
-        public init(encoding: AudioEncoding? = nil, fromHost: String? = nil, label: String? = nil, leaseMs: Int64? = nil, link: AudioLink? = nil, maxSeconds: Int64? = nil, sessionId: String) {
+        public init(encoding: AudioEncoding? = nil, fromHost: String? = nil, label: String? = nil, leaseMs: Int64? = nil, link: AudioLink? = nil, maxSeconds: Int64? = nil, ports: AudioPorts? = nil, purpose: AudioRouteParamsPurpose? = nil, sessionId: String) {
             self.encoding = encoding
             self.fromHost = fromHost
             self.label = label
             self.leaseMs = leaseMs
             self.link = link
             self.maxSeconds = maxSeconds
+            self.ports = ports
+            self.purpose = purpose
             self.sessionId = sessionId
         }
 
@@ -812,6 +893,8 @@ public enum HubRPC {
             case leaseMs = "lease_ms"
             case link
             case maxSeconds = "max_seconds"
+            case ports
+            case purpose
             case sessionId = "session_id"
         }
     }
@@ -966,6 +1049,29 @@ public enum HubRPC {
 
         public init(batteries: [Battery]) {
             self.batteries = batteries
+        }
+    }
+
+    /// The envelope result of PUT /blob/{sha256} (D-176). Request: Authorization Bearer, Content-Length (required; 0 asks for progress), Hub-Blob-Size (the whole blob, required), Hub-Blob-Offset (where this body starts, default 0; at most received_bytes, else invalid_params with the current received_bytes in the message). The body is streamed to disk; when received_bytes reaches size the bytes are checked against the sha256 in the path (mismatch: the partial is dropped, invalid_params). too_large before any body byte is read when Hub-Blob-Size exceeds the setting or the free disk space. Unused blobs and partials are deleted 24 h after their last write. GET /blob/{sha256}: 200 or 206 (one Range: bytes=a-b or a-), raw bytes, Content-Length, Hub-Blob-Size; 404 with a not_found envelope when unknown.
+    public struct BlobPutResult: Codable, Hashable, Sendable {
+        /// All bytes are here and matched the sha256: shelf.put blob can take it.
+        public var complete: Bool
+        public var receivedBytes: Int64
+        public var sha256: String
+        public var size: Int64
+
+        public init(complete: Bool, receivedBytes: Int64, sha256: String, size: Int64) {
+            self.complete = complete
+            self.receivedBytes = receivedBytes
+            self.sha256 = sha256
+            self.size = size
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case complete
+            case receivedBytes = "received_bytes"
+            case sha256
+            case size
         }
     }
 
@@ -2142,7 +2248,7 @@ public enum HubRPC {
     }
 
     public struct PeerEndpointsResult: Codable, Hashable, Sendable {
-        /// Methods this device accepts as a binary frame (the big field as raw bytes after a JSON header, inside the box), on either path. Today transfer.chunk (field data_base64).
+        /// Methods this device accepts as a binary frame (the big field as raw bytes after a JSON header, inside the box), on either path. transfer.chunk (field data_base64); transfer.read listed here also means the device answers it with a binary frame when asked (TransferReadParams.binary, answer header {ok, result, payload: field}, D-176).
         public var binary: [String]
         /// host:port of the direct listener, tailnet addresses only (100.64.0.0/10, fd7a:115c:a1e0::/48; loopback in the simulator). POST /peer there with the sealed request (docs/TRANSFER.md section 9). Empty when the listener is off.
         public var direct: [String]
@@ -2774,8 +2880,21 @@ public enum HubRPC {
         }
     }
 
-    /// Flat by kind: file: file_name, byte_size, data_base64 (a folder is zipped and file_name is the .zip name). text: text. link: url. No id or name.
+    public struct ShelfGetParams: Codable, Hashable, Sendable {
+        /// Answer a file with blob (its sha256) instead of data_base64, at any size; the caller then reads GET /blob/{sha256}. Ignored where status.blob is absent (D-176).
+        public var blob: Bool?
+        public var id: String
+
+        public init(blob: Bool? = nil, id: String) {
+            self.blob = blob
+            self.id = id
+        }
+    }
+
+    /// Flat by kind: file: file_name, byte_size, and data_base64 or (asked with blob:true) blob (a folder is zipped and file_name is the .zip name). text: text. link: url. No id or name.
     public struct ShelfGetResult: Codable, Hashable, Sendable {
+        /// sha256 (lowercase hex) of the file's bytes, readable with GET /blob/{sha256} on the same app for at least 24 h.
+        public var blob: String?
         public var byteSize: Int64?
         public var dataBase64: Data?
         public var fileName: String?
@@ -2783,7 +2902,8 @@ public enum HubRPC {
         public var text: String?
         public var url: String?
 
-        public init(byteSize: Int64? = nil, dataBase64: Data? = nil, fileName: String? = nil, kind: ShelfKind, text: String? = nil, url: String? = nil) {
+        public init(blob: String? = nil, byteSize: Int64? = nil, dataBase64: Data? = nil, fileName: String? = nil, kind: ShelfKind, text: String? = nil, url: String? = nil) {
+            self.blob = blob
             self.byteSize = byteSize
             self.dataBase64 = dataBase64
             self.fileName = fileName
@@ -2793,6 +2913,7 @@ public enum HubRPC {
         }
 
         enum CodingKeys: String, CodingKey {
+            case blob
             case byteSize = "byte_size"
             case dataBase64 = "data_base64"
             case fileName = "file_name"
@@ -2863,8 +2984,10 @@ public enum HubRPC {
         }
     }
 
-    /// Exactly one of text, url, path, or data_base64 (+ optional file_name) is used, checked in that order; none gives invalid_params. text must be non-empty; url must be absolute with a scheme and not file:. file_name is reduced to its last /-component and trimmed; empty, . or .. become "file". Uploaded files (data_base64) are temporary; a file put by path is not (removing the item leaves the file).
+    /// Exactly one of text, url, path, blob, or data_base64 (+ optional file_name) is used, checked in that order; none gives invalid_params. text must be non-empty; url must be absolute with a scheme and not file:. file_name is reduced to its last /-component and trimmed; empty, . or .. become "file". Uploaded files (data_base64, blob) are temporary; a file put by path is not (removing the item leaves the file).
     public struct ShelfPutParams: Codable, Hashable, Sendable {
+        /// sha256 (lowercase hex) of a complete blob uploaded to this app's /blob (D-176): the shelf takes it over (any size). Local callers only, like path: refused on a call relayed from another device (invalid_params); not_found when no complete blob has that sha256.
+        public var blob: String?
         public var dataBase64: Data?
         public var fileName: String?
         /// Display name of the device the item comes from (e.g. "Le's S23"), for the receiver's UI (the notch's arrival peek says "from <from>"). Optional; towerbridge's peer module sets it on every shelf.put it forwards to the notch, from the caller's hub.devices entry. Not part of the dedupe key.
@@ -2876,7 +2999,8 @@ public enum HubRPC {
         public var text: String?
         public var url: String?
 
-        public init(dataBase64: Data? = nil, fileName: String? = nil, from: String? = nil, fromKind: String? = nil, path: String? = nil, text: String? = nil, url: String? = nil) {
+        public init(blob: String? = nil, dataBase64: Data? = nil, fileName: String? = nil, from: String? = nil, fromKind: String? = nil, path: String? = nil, text: String? = nil, url: String? = nil) {
+            self.blob = blob
             self.dataBase64 = dataBase64
             self.fileName = fileName
             self.from = from
@@ -2887,6 +3011,7 @@ public enum HubRPC {
         }
 
         enum CodingKeys: String, CodingKey {
+            case blob
             case dataBase64 = "data_base64"
             case fileName = "file_name"
             case from
@@ -2925,11 +3050,104 @@ public enum HubRPC {
         }
     }
 
+    /// One borrowed speaker as the tower sees it (D-148's caller side): the PipeWire sink and the device's audio.route session behind it.
+    public struct SpeakerSession: Codable, Hashable, Sendable {
+        public var device: String
+        public var link: AudioLink?
+        /// The sink is the tower's default for this session (make_default); the old default comes back at the end.
+        public var madeDefault: Bool?
+        /// stopped / failed / needs_user: what happened, in plain words.
+        public var reason: String?
+        /// The device's receiver.
+        public var remote: AudioEndpoint?
+        public var sessionId: String?
+        /// PipeWire node name of the sink (e.g. hub_speaker_phone); its description is "<Device> (hub)".
+        public var sink: String
+        public var startedAt: String?
+        /// standby: the sink is there but idle and nothing runs on the device; playing into it starts a session. live: the device's receiver is bound and the sink sends to it.
+        public var state: SpeakerSessionState
+
+        public init(device: String, link: AudioLink? = nil, madeDefault: Bool? = nil, reason: String? = nil, remote: AudioEndpoint? = nil, sessionId: String? = nil, sink: String, startedAt: String? = nil, state: SpeakerSessionState) {
+            self.device = device
+            self.link = link
+            self.madeDefault = madeDefault
+            self.reason = reason
+            self.remote = remote
+            self.sessionId = sessionId
+            self.sink = sink
+            self.startedAt = startedAt
+            self.state = state
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case device
+            case link
+            case madeDefault = "made_default"
+            case reason
+            case remote
+            case sessionId = "session_id"
+            case sink
+            case startedAt = "started_at"
+            case state
+        }
+    }
+
+    public struct SpeakerStartParams: Codable, Hashable, Sendable {
+        /// Whose speaker (default: the speaker module's device setting, phone).
+        public var device: String?
+        /// Default rs8m.
+        public var fec: SpeakerStartParamsFec?
+        /// Also make the sink the tower's default output for this session only: the previous default comes back when the session ends (also after a towerbridge restart). Default false: the owner picks the sink in the audio menu, or plays into it with --target.
+        public var makeDefault: Bool?
+        /// As AudioRouteParams.purpose (default media).
+        public var purpose: SpeakerStartParamsPurpose?
+        /// The device's roc jitter buffer (default: setting target_latency_ms, 80; 20-2000). Lower is snappier, higher survives a worse network.
+        public var targetLatencyMs: Int64?
+
+        public init(device: String? = nil, fec: SpeakerStartParamsFec? = nil, makeDefault: Bool? = nil, purpose: SpeakerStartParamsPurpose? = nil, targetLatencyMs: Int64? = nil) {
+            self.device = device
+            self.fec = fec
+            self.makeDefault = makeDefault
+            self.purpose = purpose
+            self.targetLatencyMs = targetLatencyMs
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case device
+            case fec
+            case makeDefault = "make_default"
+            case purpose
+            case targetLatencyMs = "target_latency_ms"
+        }
+    }
+
+    public struct SpeakerStatusResult: Codable, Hashable, Sendable {
+        /// Current sinks (standby or in a session) plus the last ended one per device.
+        public var sessions: [SpeakerSession]
+
+        public init(sessions: [SpeakerSession]) {
+            self.sessions = sessions
+        }
+    }
+
+    public struct SpeakerStopParams: Codable, Hashable, Sendable {
+        /// Default: the device setting.
+        public var device: String?
+        public var reason: String?
+
+        public init(device: String? = nil, reason: String? = nil) {
+            self.device = device
+            self.reason = reason
+        }
+    }
+
     /// The first eight fields are the notch's. The rest are optional additions: a peer without protocol is notch v1 speaking protocol 1, and its modules are core plus shelf/clipboard per shelf_enabled/clipboard_enabled. towerbridge always sends all of them.
     public struct StatusResult: Codable, Hashable, Sendable {
         /// App version (the notch's CFBundleShortVersionString; towerbridge's build version).
         public var appVersion: String
         public var autoProtectSecrets: Bool
+        /// This app's local /rpc server also serves the streaming /blob route and accepts shelf.put blob and shelf.get blob:true (D-176). Absent = false: use data_base64 within max_payload_bytes.
+        public var blob: Bool?
         public var clipboardCount: Int64
         public var clipboardEnabled: Bool
         public var clipboardPinnedCount: Int64
@@ -2938,7 +3156,9 @@ public enum HubRPC {
         public var forwardError: String?
         /// Methods other devices can call here that another local app answers (the Mac helper forwards them to the notch, D-128); their modules then count in shelf_enabled/clipboard_enabled and modules, with the forward target's values. Absent = nothing forwarded.
         public var forwarded: [String]?
-        /// Cap on decoded payload bytes in either direction (67108864).
+        /// Largest file this device takes right now through transfer.* or /blob: its setting and its free disk space (D-176). Absent or 0 = unknown; senders just try and read too_large.
+        public var maxFileBytes: Int64?
+        /// Cap on decoded payload bytes in either direction (67108864). Applies to base64 fields only (data_base64, image_base64); /blob and transfer.* are not limited by it (D-176).
         public var maxPayloadBytes: Int64
         public var minProtocol: Int64?
         /// Enabled modules on this device.
@@ -2947,17 +3167,21 @@ public enum HubRPC {
         public var role: StatusResultRole?
         public var shelfCount: Int64
         public var shelfEnabled: Bool
+        /// shelf.put accepts path from a local caller (D-142): the Mac helper hands received files to the notch by path and then applies no size cap of the notch's (D-176). Absent = false.
+        public var shelfPutPath: Bool?
         public var time: String?
 
-        public init(appVersion: String, autoProtectSecrets: Bool, clipboardCount: Int64, clipboardEnabled: Bool, clipboardPinnedCount: Int64, device: Device? = nil, forwardError: String? = nil, forwarded: [String]? = nil, maxPayloadBytes: Int64, minProtocol: Int64? = nil, modules: [String]? = nil, `protocol`: Int64? = nil, role: StatusResultRole? = nil, shelfCount: Int64, shelfEnabled: Bool, time: String? = nil) {
+        public init(appVersion: String, autoProtectSecrets: Bool, blob: Bool? = nil, clipboardCount: Int64, clipboardEnabled: Bool, clipboardPinnedCount: Int64, device: Device? = nil, forwardError: String? = nil, forwarded: [String]? = nil, maxFileBytes: Int64? = nil, maxPayloadBytes: Int64, minProtocol: Int64? = nil, modules: [String]? = nil, `protocol`: Int64? = nil, role: StatusResultRole? = nil, shelfCount: Int64, shelfEnabled: Bool, shelfPutPath: Bool? = nil, time: String? = nil) {
             self.appVersion = appVersion
             self.autoProtectSecrets = autoProtectSecrets
+            self.blob = blob
             self.clipboardCount = clipboardCount
             self.clipboardEnabled = clipboardEnabled
             self.clipboardPinnedCount = clipboardPinnedCount
             self.device = device
             self.forwardError = forwardError
             self.forwarded = forwarded
+            self.maxFileBytes = maxFileBytes
             self.maxPayloadBytes = maxPayloadBytes
             self.minProtocol = minProtocol
             self.modules = modules
@@ -2965,18 +3189,21 @@ public enum HubRPC {
             self.role = role
             self.shelfCount = shelfCount
             self.shelfEnabled = shelfEnabled
+            self.shelfPutPath = shelfPutPath
             self.time = time
         }
 
         enum CodingKeys: String, CodingKey {
             case appVersion = "app_version"
             case autoProtectSecrets = "auto_protect_secrets"
+            case blob
             case clipboardCount = "clipboard_count"
             case clipboardEnabled = "clipboard_enabled"
             case clipboardPinnedCount = "clipboard_pinned_count"
             case device
             case forwardError = "forward_error"
             case forwarded
+            case maxFileBytes = "max_file_bytes"
             case maxPayloadBytes = "max_payload_bytes"
             case minProtocol = "min_protocol"
             case modules
@@ -2984,6 +3211,7 @@ public enum HubRPC {
             case role
             case shelfCount = "shelf_count"
             case shelfEnabled = "shelf_enabled"
+            case shelfPutPath = "shelf_put_path"
             case time
         }
     }
@@ -3252,6 +3480,152 @@ public enum HubRPC {
         public init(end: Int64, start: Int64) {
             self.end = end
             self.start = start
+        }
+    }
+
+    public struct TransferReadParams: Codable, Hashable, Sendable {
+        /// Answer as a binary frame (data_base64 empty, the bytes raw after the frame header, D-140 format). Peers send it only to a target whose peer.endpoints binary lists transfer.read.
+        public var binary: Bool?
+        /// Bytes wanted, 1..1048576; fewer come back at the end of the file.
+        public var length: Int64
+        /// First byte, 0-based; offset == size reads nothing (eof).
+        public var offset: Int64
+        /// The file's sha256, lowercase hex (64): ShelfGetResult.blob or a known file's hash.
+        public var sha256: String
+
+        public init(binary: Bool? = nil, length: Int64, offset: Int64, sha256: String) {
+            self.binary = binary
+            self.length = length
+            self.offset = offset
+            self.sha256 = sha256
+        }
+    }
+
+    public struct TransferReadResult: Codable, Hashable, Sendable {
+        /// The bytes; empty in a binary answer frame, where they follow the header.
+        public var dataBase64: Data
+        /// offset + bytes returned == size.
+        public var eof: Bool
+        public var offset: Int64
+        /// sha256 of these bytes (hex), checked by the reader.
+        public var sha256: String
+        /// The whole file's size.
+        public var size: Int64
+
+        public init(dataBase64: Data, eof: Bool, offset: Int64, sha256: String, size: Int64) {
+            self.dataBase64 = dataBase64
+            self.eof = eof
+            self.offset = offset
+            self.sha256 = sha256
+            self.size = size
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case dataBase64 = "data_base64"
+            case eof
+            case offset
+            case sha256
+            case size
+        }
+    }
+
+    public struct TransferSendInfo: Codable, Hashable, Sendable {
+        /// failed: the error code (too_large, unavailable, ...).
+        public var code: String?
+        public var device: String
+        /// failed/retrying: why, for the user.
+        public var error: String?
+        /// completed only.
+        public var item: ShelfPutResult?
+        public var name: String
+        /// How the last chunk went.
+        public var path: TransferSendInfoPath?
+        public var sendId: String
+        /// Bytes the target confirmed stored (end to end, like transfer.progress).
+        public var sentBytes: Int64
+        public var size: Int64
+        public var started: String
+        public var state: TransferSendState
+        public var updated: String
+
+        public init(code: String? = nil, device: String, error: String? = nil, item: ShelfPutResult? = nil, name: String, path: TransferSendInfoPath? = nil, sendId: String, sentBytes: Int64, size: Int64, started: String, state: TransferSendState, updated: String) {
+            self.code = code
+            self.device = device
+            self.error = error
+            self.item = item
+            self.name = name
+            self.path = path
+            self.sendId = sendId
+            self.sentBytes = sentBytes
+            self.size = size
+            self.started = started
+            self.state = state
+            self.updated = updated
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case code
+            case device
+            case error
+            case item
+            case name
+            case path
+            case sendId = "send_id"
+            case sentBytes = "sent_bytes"
+            case size
+            case started
+            case state
+            case updated
+        }
+    }
+
+    public struct TransferSendParams: Codable, Hashable, Sendable {
+        /// Target device id (peer.list).
+        public var device: String
+        public var mime: String?
+        /// Name on the target (default: the file's base name).
+        public var name: String?
+        /// Absolute path of a regular file on this device.
+        public var path: String
+
+        public init(device: String, mime: String? = nil, name: String? = nil, path: String) {
+            self.device = device
+            self.mime = mime
+            self.name = name
+            self.path = path
+        }
+    }
+
+    public struct TransferSendResult: Codable, Hashable, Sendable {
+        public var sendId: String
+
+        public init(sendId: String) {
+            self.sendId = sendId
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case sendId = "send_id"
+        }
+    }
+
+    public struct TransferSendsParams: Codable, Hashable, Sendable {
+        /// Only this send (default: all).
+        public var sendId: String?
+
+        public init(sendId: String? = nil) {
+            self.sendId = sendId
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case sendId = "send_id"
+        }
+    }
+
+    public struct TransferSendsResult: Codable, Hashable, Sendable {
+        public var sends: [TransferSendInfo]
+
+        public init(sends: [TransferSendInfo]) {
+            self.sends = sends
         }
     }
 
