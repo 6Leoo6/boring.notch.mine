@@ -284,7 +284,7 @@ final class ClosureMenuItem: NSMenuItem {
 
     init(title: String, action handler: @escaping () -> Void) {
         self.handler = handler
-        super.init(title: title, action: #selector(fire), keyEquivalent: "")
+        super.init(title: title, action: #selector(ClosureMenuItem.fire), keyEquivalent: "")
         target = self
     }
 
