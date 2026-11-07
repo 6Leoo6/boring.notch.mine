@@ -322,6 +322,7 @@ let tools: [Tool] = [
             let temp = try await bridge.downloadBlob(result["blob"] as? String ?? "")
             try? FileManager.default.removeItem(at: target)
             try FileManager.default.moveItem(at: temp, to: target)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: target.path)
             return textContent(["kind": "file", "saved_to": target.path, "byte_size": try fileSize(target)])
         case "file":
             guard let encoded = result["data_base64"] as? String, let data = Data(base64Encoded: encoded) else {
