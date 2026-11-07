@@ -277,7 +277,7 @@ private final class BridgeConnection: @unchecked Sendable {
         return true
     }
 
-    private func respond(status: Int, json: Data) {
+    private func respond(status: Int, json: Data, drain: Bool = false) {
         let reason: String
         switch status {
         case 200: reason = "OK"
@@ -294,7 +294,7 @@ private final class BridgeConnection: @unchecked Sendable {
         var response = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(json.count)\r\nConnection: close\r\n\r\n".utf8)
         response.append(json)
         connection.send(content: response, completion: .contentProcessed { [weak self] _ in
-            self?.close()
+            if drain { self?.drainThenClose() } else { self?.close() }
         })
     }
 
@@ -331,18 +331,21 @@ private final class BridgeConnection: @unchecked Sendable {
     }
 
     private func receiveBlob(_ sha: String, headers: [String: String], bodyStart: Data.Index) {
+        // An answer before the body was read: drain it a moment so the client sees the reply
+        // instead of a reset.
+        let early = { (json: Data) in self.respond(status: 200, json: json, drain: true) }
         // No chunked bodies (hub contract): their framing would land in the file.
         guard headers["transfer-encoding"] == nil,
               let lengthString = headers["content-length"], let length = Int64(lengthString), length >= 0 else {
-            return respond(status: 411, json: Self.errorBody("Content-Length required, without Transfer-Encoding"))
+            return respond(status: 411, json: Self.errorBody("Content-Length required, without Transfer-Encoding"), drain: true)
         }
         guard let sizeString = headers["hub-blob-size"], let size = Int64(sizeString) else {
-            return respond(status: 200, json: Self.errorBody("Hub-Blob-Size (the whole blob's size) is required", code: "invalid_params"))
+            return early(Self.errorBody("Hub-Blob-Size (the whole blob's size) is required", code: "invalid_params"))
         }
         var offset: Int64 = 0
         if let raw = headers["hub-blob-offset"] {
             guard let value = Int64(raw) else {
-                return respond(status: 200, json: Self.errorBody("Hub-Blob-Offset must be a number", code: "invalid_params"))
+                return early(Self.errorBody("Hub-Blob-Offset must be a number", code: "invalid_params"))
             }
             offset = value
         }
@@ -350,14 +353,14 @@ private final class BridgeConnection: @unchecked Sendable {
         do {
             switch try HubBlobStore.shared.begin(sha: sha, size: size, offset: offset, length: length) {
             case .answer(let progress):
-                return respond(status: 200, json: Self.resultBody(progress.json))
+                return early(Self.resultBody(progress.json))
             case .upload(let started):
                 upload = started
             }
         } catch let failure as HubBlobStore.Failure {
-            return respond(status: 200, json: Self.errorBody(failure.message, code: failure.code))
+            return early(Self.errorBody(failure.message, code: failure.code))
         } catch {
-            return respond(status: 200, json: Self.errorBody(error.localizedDescription, code: "unavailable"))
+            return early(Self.errorBody(error.localizedDescription, code: "unavailable"))
         }
 
         // Body bytes that came in with the headers
@@ -371,10 +374,19 @@ private final class BridgeConnection: @unchecked Sendable {
         receiveBody(upload, remaining: remaining)
     }
 
+    /// A stalled upload gives its blob back after this long, so it can't stay busy forever.
+    private static let uploadIdleTimeout: TimeInterval = 30
+
     private func receiveBody(_ upload: HubBlobStore.Upload, remaining: Int64) {
         guard remaining > 0 else { return finishUpload(upload) }
         let maximum = Int(min(remaining, Int64(1 << 20)))
+        let timer = DispatchWorkItem { [weak self] in
+            upload.abort()
+            self?.close()
+        }
+        queue.asyncAfter(deadline: .now() + Self.uploadIdleTimeout, execute: timer)
         connection.receive(minimumIncompleteLength: 1, maximumLength: maximum) { [weak self] data, _, isComplete, error in
+            timer.cancel()
             guard let self else { return upload.abort() }
             var left = remaining
             if let data, !data.isEmpty {
@@ -408,7 +420,26 @@ private final class BridgeConnection: @unchecked Sendable {
     private func failUpload(_ upload: HubBlobStore.Upload, _ error: Error) {
         upload.abort()
         let failure = error as? HubBlobStore.Failure ?? .io(error.localizedDescription)
-        respond(status: 200, json: Self.errorBody(failure.message, code: failure.code))
+        respond(status: 200, json: Self.errorBody(failure.message, code: failure.code), drain: true)
+    }
+
+    /// After an early reply: close our side, then read and drop what the client is still
+    /// sending for up to 2 s, so closing doesn't reset the connection before it reads the reply.
+    private func drainThenClose() {
+        connection.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .idempotent)
+        let deadline = DispatchWorkItem { [weak self] in self?.close() }
+        queue.asyncAfter(deadline: .now() + 2, execute: deadline)
+        func drain() {
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [weak self] _, _, isComplete, error in
+                guard let self else { return }
+                if isComplete || error != nil {
+                    deadline.cancel()
+                    return self.close()
+                }
+                drain()
+            }
+        }
+        drain()
     }
 
     private func serveBlob(_ sha: String, range: String?) {

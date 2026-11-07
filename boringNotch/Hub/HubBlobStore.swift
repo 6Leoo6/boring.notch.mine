@@ -60,6 +60,7 @@ final class HubBlobStore: @unchecked Sendable {
     private struct Reference {
         let url: URL
         let size: Int64
+        let modified: Date?
         var lastUsed: Date
     }
 
@@ -68,7 +69,9 @@ final class HubBlobStore: @unchecked Sendable {
     /// Running hash of each partial's contiguous prefix, so completing an upload does not
     /// read the whole file again. Lost on restart; the file is then hashed once at the end.
     private var hashers: [String: (hasher: SHA256, upTo: Int64)] = [:]
-    private var busy: Set<String> = []
+    /// Uploads running now, by sha256, with the bytes each may still write: busy blobs, and
+    /// space promised to them so two big uploads at once can't both pass the free-space check.
+    private var reserved: [String: Int64] = [:]
     private var references: [String: Reference] = [:]
     private var hashCache: [String: String] = [:]
     private var sweeper: DispatchSourceTimer?
@@ -86,22 +89,34 @@ final class HubBlobStore: @unchecked Sendable {
 
     static func normalized(_ raw: String) -> String? {
         let sha = raw.lowercased()
-        guard sha.count == 64, sha.allSatisfy({ $0.isHexDigit }) else { return nil }
+        guard sha.count == 64, sha.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
         return sha
     }
 
     private func completeURL(_ sha: String) -> URL { directory.appendingPathComponent(sha) }
     private func partURL(_ sha: String) -> URL { directory.appendingPathComponent(sha + ".part") }
 
+    static func modified(_ url: URL) -> Date? {
+        try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+    }
+
     static func fileSize(_ url: URL) -> Int64? {
         (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
     }
 
-    /// Bytes this app could still take, keeping the margin free.
+    /// Bytes this app could still take, keeping the margin free and the space promised to
+    /// running uploads.
     func availableBytes() -> Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return availableBytesLocked()
+    }
+
+    private func availableBytesLocked() -> Int64 {
         let values = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
         let free = values?.volumeAvailableCapacityForImportantUsage ?? Int64(values?.volumeAvailableCapacity ?? 0)
-        return max(0, free - Self.freeSpaceMargin)
+        let promised = reserved.values.reduce(0, +)
+        return max(0, free - Self.freeSpaceMargin - promised)
     }
 
     // MARK: - Upload (PUT /blob/{sha256})
@@ -112,7 +127,8 @@ final class HubBlobStore: @unchecked Sendable {
         case upload(Upload)
     }
 
-    func begin(sha: String, size: Int64, offset: Int64, length: Int64) throws -> Begin {
+    func begin(sha: String, size: Int64, offset requested: Int64, length: Int64) throws -> Begin {
+        var offset = requested
         guard size >= 0 else { throw Failure.invalid("Hub-Blob-Size must be 0 or more") }
         guard offset >= 0 else { throw Failure.invalid("Hub-Blob-Offset must be 0 or more") }
         lock.lock()
@@ -130,20 +146,20 @@ final class HubBlobStore: @unchecked Sendable {
             received = 0
         }
         let progress = Progress(sha256: sha, size: size, receivedBytes: received, complete: false)
-        if length == 0 && !(size == 0 && offset == 0) {
-            guard offset <= received else {
-                throw Failure.invalid("Hub-Blob-Offset \(offset) is past received_bytes \(received)")
-            }
-            return .answer(progress)
-        }
-        guard !busy.contains(sha) else { throw Failure.busy("Another upload of this blob is running") }
         guard offset <= received else {
             throw Failure.invalid("Hub-Blob-Offset \(offset) is past received_bytes \(received)")
         }
-        guard offset + length <= size else {
+        if length == 0 {
+            // A partial with every byte that never completed (the app quit while hashing or
+            // moving it): complete it now instead of answering progress forever.
+            guard received == size, reserved[sha] == nil else { return .answer(progress) }
+            offset = received
+        }
+        guard reserved[sha] == nil else { throw Failure.busy("Another upload of this blob is running; try again shortly") }
+        guard length >= 0, length <= size - offset else {
             throw Failure.invalid("Hub-Blob-Offset \(offset) + Content-Length \(length) is past Hub-Blob-Size \(size)")
         }
-        let available = availableBytes()
+        let available = availableBytesLocked()
         guard size - offset <= available else {
             throw Failure.tooLarge("\(size - offset) more bytes do not fit: \(available) bytes are free on this Mac")
         }
@@ -165,7 +181,7 @@ final class HubBlobStore: @unchecked Sendable {
             hasher = SHA256()
         }
         hashers[sha] = nil
-        busy.insert(sha)
+        reserved[sha] = size - offset
         return .upload(Upload(store: self, sha: sha, size: size, offset: offset, handle: handle, hasher: hasher))
     }
 
@@ -177,6 +193,7 @@ final class HubBlobStore: @unchecked Sendable {
         private let store: HubBlobStore
         private var handle: FileHandle?
         private var hasher: SHA256?
+        private var ended = false
 
         fileprivate init(store: HubBlobStore, sha: String, size: Int64, offset: Int64, handle: FileHandle, hasher: SHA256?) {
             self.store = store
@@ -204,6 +221,8 @@ final class HubBlobStore: @unchecked Sendable {
 
         /// The body ended early (the client went away): keep what arrived for a resume.
         func abort() {
+            guard !ended else { return }
+            ended = true
             try? handle?.close()
             handle = nil
             store.release(sha, hasher: hasher, upTo: position)
@@ -212,6 +231,8 @@ final class HubBlobStore: @unchecked Sendable {
         /// All of this body is in. Hashes the file when the running hash was lost (slow for a
         /// big file, so call it off the connection queue).
         func finish() throws -> Progress {
+            guard !ended else { throw Failure.io("Upload already ended") }
+            ended = true
             try? handle?.synchronize()
             try? handle?.close()
             handle = nil
@@ -225,7 +246,7 @@ final class HubBlobStore: @unchecked Sendable {
 
     private func release(_ sha: String, hasher: SHA256?, upTo: Int64) {
         lock.lock()
-        busy.remove(sha)
+        reserved[sha] = nil
         if let hasher { hashers[sha] = (hasher, upTo) }
         lock.unlock()
     }
@@ -240,7 +261,7 @@ final class HubBlobStore: @unchecked Sendable {
         }
         lock.lock()
         defer { lock.unlock() }
-        busy.remove(sha)
+        reserved[sha] = nil
         hashers[sha] = nil
         guard digest == sha else {
             try? FileManager.default.removeItem(at: part)
@@ -270,7 +291,8 @@ final class HubBlobStore: @unchecked Sendable {
         guard var reference = references[sha] else { return nil }
         let accessing = reference.url.startAccessingSecurityScopedResource()
         defer { if accessing { reference.url.stopAccessingSecurityScopedResource() } }
-        guard Self.fileSize(reference.url) == reference.size else {
+        // Edited since it was hashed: those bytes no longer have this sha256.
+        guard Self.fileSize(reference.url) == reference.size, Self.modified(reference.url) == reference.modified else {
             references[sha] = nil
             return nil
         }
@@ -298,15 +320,25 @@ final class HubBlobStore: @unchecked Sendable {
         } catch {
             throw Failure.io("Could not move the blob onto the shelf: \(error.localizedDescription)")
         }
-        references[sha] = Reference(url: target, size: size, lastUsed: Date())
+        references[sha] = Reference(url: target, size: size, modified: Self.modified(target), lastUsed: Date())
         return target
+    }
+
+    /// Undoes `takeOver` when the shelf could not keep the file, so the blob isn't orphaned.
+    func giveBack(_ sha: String, from url: URL) {
+        lock.lock()
+        defer { lock.unlock() }
+        references[sha] = nil
+        try? FileManager.default.moveItem(at: url, to: completeURL(sha))
+        try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
     }
 
     /// `shelf.get {blob: true}` for a file: its hash, remembered so `GET /blob` can serve it.
     /// `url` must be readable (inside the caller's security scope) while this runs.
     func reference(_ url: URL) throws -> (sha: String, size: Int64) {
         guard let size = Self.fileSize(url) else { throw Failure.notFound("The file behind this shelf item can't be read") }
-        let mtime = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let modified = Self.modified(url)
+        let mtime = modified?.timeIntervalSince1970 ?? 0
         let key = "\(url.path)|\(size)|\(mtime)"
         lock.lock()
         let cached = hashCache[key]
@@ -319,7 +351,7 @@ final class HubBlobStore: @unchecked Sendable {
         }
         lock.lock()
         hashCache[key] = sha
-        references[sha] = Reference(url: url, size: size, lastUsed: Date())
+        references[sha] = Reference(url: url, size: size, modified: modified, lastUsed: Date())
         lock.unlock()
         return (sha, size)
     }
@@ -353,7 +385,7 @@ final class HubBlobStore: @unchecked Sendable {
         for file in files {
             let name = file.lastPathComponent
             let sha = name.hasSuffix(".part") ? String(name.dropLast(5)) : name
-            guard !busy.contains(sha) else { continue }
+            guard reserved[sha] == nil else { continue }
             let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             if modified < cutoff {
                 try? FileManager.default.removeItem(at: file)

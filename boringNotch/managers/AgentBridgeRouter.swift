@@ -146,7 +146,8 @@ enum AgentBridgeRouter {
             // max_payload_bytes now caps only the base64 fields.
             "blob": true,
             "shelf_put_path": true,
-            "max_file_bytes": HubBlobStore.shared.availableBytes(),
+            // 0 would mean "unknown": below the margin say 1, so senders get too_large.
+            "max_file_bytes": max(HubBlobStore.shared.availableBytes(), 1),
         ])
     }
 
@@ -319,7 +320,10 @@ enum AgentBridgeRouter {
                 throw BridgeError("blob must be a sha256 (64 hex characters)", code: "invalid_params")
             }
             let url = try HubBlobStore.shared.takeOver(sha, name: sanitizedFileName(args.string("file_name")))
-            guard let bookmark = try? Bookmark(url: url).data else { throw BridgeError("Could not store the file") }
+            guard let bookmark = try? Bookmark(url: url).data else {
+                HubBlobStore.shared.giveBack(sha, from: url)
+                throw BridgeError("Could not store the file", code: "unavailable")
+            }
             kind = .file(bookmark: bookmark)
             isTemporary = true
         } else if let encoded = args.string("data_base64") {

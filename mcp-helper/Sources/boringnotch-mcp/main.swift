@@ -18,7 +18,12 @@ typealias JSON = [String: Any]
 
 struct ToolError: Error {
     let message: String
-    init(_ message: String) { self.message = message }
+    /// The bridge's error code when it sent one (`unavailable`, `too_large`...).
+    let code: String?
+    init(_ message: String, code: String? = nil) {
+        self.message = message
+        self.code = code
+    }
 }
 
 let supportedProtocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
@@ -98,8 +103,13 @@ struct Bridge {
     /// Whether this boring.notch serves the streaming /blob route (hub D-176). An older app
     /// says nothing and gets base64 within 64 MiB, as before.
     func hasBlob() async -> Bool {
-        let status = try? await call("status") as? JSON
-        return status?["blob"] as? Bool == true
+        await blobStatus() != nil
+    }
+
+    /// The app's status when it serves /blob, else nil.
+    func blobStatus() async -> JSON? {
+        guard let status = try? await call("status") as? JSON, status["blob"] as? Bool == true else { return nil }
+        return status
     }
 
     private func blobURL(_ sha: String) throws -> URL {
@@ -112,7 +122,7 @@ struct Bridge {
             throw ToolError("boring.notch sent an unreadable reply")
         }
         guard reply["ok"] as? Bool == true, let result = reply["result"] as? JSON else {
-            throw ToolError(reply["error"] as? String ?? "boring.notch reported an unknown error")
+            throw ToolError(reply["error"] as? String ?? "boring.notch reported an unknown error", code: reply["code"] as? String)
         }
         return result
     }
@@ -130,26 +140,35 @@ struct Bridge {
 
     /// Streams a file of any size to PUT /blob/{sha256}, resuming what the app already has.
     /// Returns the sha256 once the app holds the complete blob.
-    func uploadBlob(_ file: URL) async throws -> String {
+    func uploadBlob(_ file: URL, status: JSON) async throws -> String {
         let sha = try sha256(of: file)
         let size = try fileSize(file)
-        for _ in 0..<3 {
-            let (probe, _) = try await URLSession.shared.data(for: try putRequest(sha, size: size, offset: 0, length: 0))
-            let state = try envelope(probe)
-            if state["complete"] as? Bool == true { return sha }
-            let offset = (state["received_bytes"] as? NSNumber)?.int64Value ?? 0
-            guard let stream = InputStream(url: file) else { throw ToolError("Could not read \(file.path)") }
-            stream.setProperty(NSNumber(value: offset), forKey: .fileCurrentOffsetKey)
-            var request = try putRequest(sha, size: size, offset: offset, length: size - offset)
-            request.httpBodyStream = stream
+        for attempt in 1...8 {
             do {
+                // Ask first: what the app already has, and whether the rest fits, so a refusal
+                // arrives as an answer rather than a reset in the middle of a body.
+                let (probe, _) = try await URLSession.shared.data(for: try putRequest(sha, size: size, offset: 0, length: 0))
+                let state = try envelope(probe)
+                if state["complete"] as? Bool == true { return sha }
+                let offset = (state["received_bytes"] as? NSNumber)?.int64Value ?? 0
+                let room = (status["max_file_bytes"] as? NSNumber)?.int64Value ?? 0
+                if room > 0, size - offset > room {
+                    throw ToolError("\(file.lastPathComponent) is \(size) bytes; boring.notch has room for \(room) more", code: "too_large")
+                }
+                guard let stream = InputStream(url: file) else { throw ToolError("Could not read \(file.path)") }
+                stream.setProperty(NSNumber(value: offset), forKey: .fileCurrentOffsetKey)
+                var request = try putRequest(sha, size: size, offset: offset, length: size - offset)
+                request.httpBodyStream = stream
                 let (data, _) = try await URLSession.shared.data(for: request)
-                let result = try envelope(data)
-                if result["complete"] as? Bool == true { return sha }
-            } catch let error as ToolError {
+                if try envelope(data)["complete"] as? Bool == true { return sha }
+            } catch let error as ToolError where error.code != "unavailable" {
                 throw error
             } catch {
-                log("blob upload interrupted, resuming: \(error.localizedDescription)")
+                // unavailable: an earlier upload of the same file still holds it (it lets go
+                // within 30 s); a dropped connection: resume from what arrived.
+                let message = (error as? ToolError)?.message ?? error.localizedDescription
+                log("blob upload attempt \(attempt): \(message); retrying")
+                try await Task.sleep(nanoseconds: UInt64(min(attempt * 2, 10)) * 1_000_000_000)
             }
         }
         throw ToolError("Could not upload \(file.lastPathComponent) to boring.notch")
@@ -370,11 +389,11 @@ let tools: [Tool] = [
             defer { if let zipped { try? FileManager.default.removeItem(at: zipped.deletingLastPathComponent()) } }
             payload["file_name"] = url.lastPathComponent
             let bridge = try Bridge.locate()
-            if await bridge.hasBlob() {
+            if let status = await bridge.blobStatus() {
                 guard (try url.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true else {
                     throw ToolError("\(url.path) is not a regular file")
                 }
-                payload["blob"] = try await bridge.uploadBlob(url)
+                payload["blob"] = try await bridge.uploadBlob(url, status: status)
             } else {
                 payload["data_base64"] = try readForUpload(url).base64EncodedString()
             }
