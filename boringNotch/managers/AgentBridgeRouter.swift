@@ -54,6 +54,8 @@ enum AgentBridgeRouter {
             var out: [String: Any] = ["ok": false, "error": error.message]
             if let code = error.code { out["code"] = code }
             return encode(out)
+        } catch let error as HubBlobStore.Failure {
+            return encode(["ok": false, "error": error.message, "code": error.code])
         } catch let error as HubScreenCapture.Failure {
             var out: [String: Any] = ["ok": false, "error": error.message]
             if let code = error.code { out["code"] = code }
@@ -140,6 +142,12 @@ enum AgentBridgeRouter {
             "clipboard_pinned_count": clipboard.pinnedItems.count,
             "auto_protect_secrets": Defaults[.clipboardAutoProtectSecrets],
             "max_payload_bytes": maxPayloadBytes,
+            // hub D-176: files of any size go through /blob (or by path from the helper);
+            // max_payload_bytes now caps only the base64 fields.
+            "blob": true,
+            "shelf_put_path": true,
+            // 0 would mean "unknown": below the margin say 1, so senders get too_large.
+            "max_file_bytes": max(HubBlobStore.shared.availableBytes(), 1),
         ])
     }
 
@@ -219,6 +227,8 @@ enum AgentBridgeRouter {
             return Payload(value: ["kind": "text", "text": string])
         case .link(let url):
             return Payload(value: ["kind": "link", "url": url.absoluteString])
+        case .file(let url, let name) where args.bool("blob") == true:
+            return try await shelfFileBlob(url, name: name)
         case .file(let url, let name):
             let (data, sentName) = try await readShelfFile(url, name: name)
             return Payload(value: [
@@ -228,6 +238,25 @@ enum AgentBridgeRouter {
                 "data_base64": data.base64EncodedString(),
             ])
         }
+    }
+
+    /// `shelf.get {blob: true}` (hub D-176): the file's sha256 instead of its bytes, any size;
+    /// the caller reads it with `GET /blob/{sha256}`. A folder is zipped into the blob store.
+    private static func shelfFileBlob(_ url: URL, name: String) async throws -> Payload {
+        let (sha, size, sentName): (String, Int64, String) = try await url.accessSecurityScopedResource { url in
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
+            if values?.isDirectory == true {
+                guard let zip = await TemporaryFileStorageService.shared.createZip(from: [url]) else {
+                    throw BridgeError("Could not zip the folder")
+                }
+                defer { try? FileManager.default.removeItem(at: zip.deletingLastPathComponent()) }
+                let (sha, size) = try HubBlobStore.shared.adopt(zip)
+                return (sha, size, zip.lastPathComponent)
+            }
+            let (sha, size) = try HubBlobStore.shared.reference(url)
+            return (sha, size, name)
+        }
+        return Payload(value: ["kind": "file", "file_name": sentName, "byte_size": size, "blob": sha])
     }
 
     /// A folder goes out as a zip, the same way the shelf shares one.
@@ -283,6 +312,20 @@ enum AgentBridgeRouter {
                 throw BridgeError("Could not keep a reference to \(url.lastPathComponent)")
             }
             kind = .file(bookmark: bookmark)
+        } else if let raw = args.string("blob") {
+            // hub D-176: a file uploaded to /blob, any size. The shelf takes the file over
+            // (temporary, like data_base64). Local callers only: the hub helper strips blob
+            // from shelf.put calls it forwards from other devices, as it does path.
+            guard let sha = HubBlobStore.normalized(raw) else {
+                throw BridgeError("blob must be a sha256 (64 hex characters)", code: "invalid_params")
+            }
+            let url = try HubBlobStore.shared.takeOver(sha, name: sanitizedFileName(args.string("file_name")))
+            guard let bookmark = try? Bookmark(url: url).data else {
+                HubBlobStore.shared.giveBack(sha, from: url)
+                throw BridgeError("Could not store the file", code: "unavailable")
+            }
+            kind = .file(bookmark: bookmark)
+            isTemporary = true
         } else if let encoded = args.string("data_base64") {
             guard let data = Data(base64Encoded: encoded) else { throw BridgeError("data_base64 is not valid base64") }
             guard data.count <= maxPayloadBytes else { throw BridgeError("File exceeds \(maxPayloadBytes) bytes") }
@@ -293,7 +336,7 @@ enum AgentBridgeRouter {
             kind = .file(bookmark: bookmark)
             isTemporary = true
         } else {
-            throw BridgeError("Provide one of text, url, path, or data_base64 + file_name")
+            throw BridgeError("Provide one of text, url, path, blob, or data_base64 + file_name", code: "invalid_params")
         }
 
         return await MainActor.run {
