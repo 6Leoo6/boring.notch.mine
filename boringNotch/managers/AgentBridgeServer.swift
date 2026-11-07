@@ -331,8 +331,10 @@ private final class BridgeConnection: @unchecked Sendable {
     }
 
     private func receiveBlob(_ sha: String, headers: [String: String], bodyStart: Data.Index) {
-        guard let lengthString = headers["content-length"], let length = Int64(lengthString), length >= 0 else {
-            return respond(status: 411, json: Self.errorBody("Content-Length required"))
+        // No chunked bodies (hub contract): their framing would land in the file.
+        guard headers["transfer-encoding"] == nil,
+              let lengthString = headers["content-length"], let length = Int64(lengthString), length >= 0 else {
+            return respond(status: 411, json: Self.errorBody("Content-Length required, without Transfer-Encoding"))
         }
         guard let sizeString = headers["hub-blob-size"], let size = Int64(sizeString) else {
             return respond(status: 200, json: Self.errorBody("Hub-Blob-Size (the whole blob's size) is required", code: "invalid_params"))
